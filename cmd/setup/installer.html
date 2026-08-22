@@ -140,9 +140,9 @@ $('install').onclick=async()=>{
     $('stepForm').hidden=true;$('stepDone').hidden=false;
   }catch(e){status('status','安装失败：'+e.message,'err');btn.disabled=false;}
 };
-$('launch').onclick=async()=>{try{await fetch('/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:dir})});}catch(e){}window.close();};
-$('doneClose').onclick=()=>window.close();
-$('cancel').onclick=()=>window.close();
+$('launch').onclick=async()=>{try{await fetch('/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:dir})});}catch(e){}try{window.closeApp();}catch(e){};
+$('doneClose').onclick=()=>{try{window.closeApp();}catch(e){}};
+$('cancel').onclick=()=>{try{window.closeApp();}catch(e){}};
 $('uniGo').onclick=async()=>{
   const btn=$('uniGo');btn.disabled=true;
   status('uniStatus','正在卸载…','');

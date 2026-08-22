@@ -265,6 +265,11 @@ func main() {
 	if err := wv.Bind("pickFolder", pickFolder); err != nil {
 		log.Printf("bind pickFolder: %v", err)
 	}
+	// `window.close()` does not close a WebView2 window that the app itself created,
+	// so expose a bound function that destroys the window (endpoint of Run()).
+	if err := wv.Bind("closeApp", func() { go wv.Destroy() }); err != nil {
+		log.Printf("bind closeApp: %v", err)
+	}
 	wv.SetTitle("星匣 STARBOX 安装器")
 	wv.SetSize(920, 720, webview2.HintNone)
 	wv.Navigate(url)

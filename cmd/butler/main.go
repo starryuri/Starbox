@@ -157,16 +157,15 @@ func main() {
 	// server; `-tray` stays silent (server + tray only).
 	showWindow := *asWindow || *asDesktop || !*trayOn
 	if showWindow {
-		// If this process started the server and the user configured "tray" mode,
-		// show the tray icon so the app can be reopened/quit even after the window
-		// is closed.
 		ownsServer := !serverRunning
-		if ownsServer && cfgSettings.QuitAction != "exit" {
-			go tray.Run()
-		}
 		desk.Open(url)
-		// Keep the process alive (with the tray) after the window closes.
-		if ownsServer && cfgSettings.QuitAction != "exit" {
+
+		// Window closed. Honor the LIVE "退出行为" setting (re-read from disk so a
+		// change made in Settings takes effect immediately): "tray" keeps the app
+		// alive in the tray, "exit" quits it entirely.
+		ws := settings.Load(dataDir)
+		if ownsServer && ws.QuitAction != "exit" {
+			go tray.Run()
 			<-ctx.Done()
 			return
 		}
