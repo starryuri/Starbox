@@ -57,6 +57,14 @@ plugins/info/           信息收集模板（Python）
 config.example.json     配置模板（真实 config.json 已被 .gitignore 排除）
 ```
 
+## 安装（Windows · v1.0.0）
+
+从 [Releases](https://github.com/starryuri/Starbox/releases) 下载 **Starbox-Setup-1.0.0.exe**，双击即可安装到 `%LOCALAPPDATA%\STARBOX`（可用 `-dir <路径>` 指定位置）。安装会自动：打包 `starbox.exe` + `WebView2Loader.dll` + 默认 `config.json`，创建「开始菜单 / 桌面」快捷方式，写入控制面板卸载项，并生成 `unins.exe` 卸载程序。
+
+**卸载**：控制面板 →「应用和功能」→ STARBOX → 卸载；或直接运行安装目录下的 `unins.exe`。
+
+也可以从源码自行构建（见下）。
+
 ## 构建
 
 > 需要 Go 1.2x。若 `go` 不在 PATH，可指定绝对路径。
@@ -66,6 +74,8 @@ go mod tidy                     # 拉取依赖
 go build -o starbox.exe ./cmd/butler        # 控制台后端版
 # 无控制台黑框的 GUI 版（推荐发布）：
 go build -ldflags="-H=windowsgui" -o starbox.exe ./cmd/butler
+# 自包含安装包（含 starbox.exe + DLL + 默认配置）：
+go build -ldflags="-H=windowsgui" -o setup.exe ./cmd/setup
 ```
 
 ## 运行

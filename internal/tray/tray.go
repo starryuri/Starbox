@@ -1,6 +1,7 @@
 package tray
 
 import (
+	_ "embed"
 	"log"
 	"os"
 	"os/exec"
@@ -8,12 +9,16 @@ import (
 	"github.com/energye/systray"
 )
 
+//go:embed tray_icon.png
+var trayIcon []byte
+
 // Run starts the system tray icon and blocks until the user chooses Quit.
 func Run() {
 	systray.Run(onReady, nil)
 }
 
 func onReady() {
+	systray.SetIcon(trayIcon)
 	systray.SetTitle("STARBOX")
 	systray.SetTooltip("STARBOX · 你的次元，收于一匣")
 
