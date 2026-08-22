@@ -1,10 +1,13 @@
 //go:build windows
 
-// Starbox setup — a native Windows GUI installer / uninstaller built on WebView2.
+// Starbox setup — a native Windows GUI installer built on WebView2.
 //
-//	setup.exe               -> GUI install (pick dir / start menu / desktop)
-//	setup.exe -uninstall    -> GUI uninstall
-//	unins.exe (any name w/ "unins") -> always uninstall, even with no args
+//	setup.exe   -> GUI install (pick dir / start menu / desktop)
+//
+// The uninstaller is a separate, standalone binary (unins.exe) built from
+// cmd/unin, deployed by this installer and invoked by the Control Panel / the
+// start-menu "卸载 STARBOX" shortcut. Keeping them as two distinct programs
+// avoids the installer ever acting as an uninstaller.
 package main
 
 import (
@@ -34,13 +37,16 @@ var payloadDLL []byte
 //go:embed payload/config.json
 var payloadCfg []byte
 
+//go:embed payload/unins.exe
+var uninsExe []byte
+
 //go:embed installer.html
 var installerHTML string
 
 const (
-	runKey          = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-	uninstallKey    = `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\STARBOX`
-	createNoWindow  = 0x08000000
+	runKey         = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+	uninstallKey   = `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\STARBOX`
+	createNoWindow = 0x08000000
 )
 
 // runNoWindow runs a command without flashing a console window.
@@ -102,16 +108,15 @@ func install(dir string, startMenu, desktop bool) error {
 			return err
 		}
 	}
-	if self, err := os.Executable(); err == nil {
-		if b, err := os.ReadFile(self); err == nil {
-			_ = writeFile(filepath.Join(dir, "unins.exe"), b)
-		}
+	// Deploy the standalone uninstaller binary.
+	if err := writeFile(filepath.Join(dir, "unins.exe"), uninsExe); err != nil {
+		return err
 	}
 	if startMenu {
 		sm, _ := shortLinkPaths()
 		shortcut(sm, exePath, "", dir, "STARBOX · 你的次元 · 收于一匣")
 		// Add an uninstall entry in the same start-menu folder.
-		shortcut(filepath.Join(filepath.Dir(sm), "卸载 STARBOX.lnk"), filepath.Join(dir, "unins.exe"), "-uninstall", dir, "卸载 STARBOX")
+		shortcut(filepath.Join(filepath.Dir(sm), "卸载 STARBOX.lnk"), filepath.Join(dir, "unins.exe"), "", dir, "卸载 STARBOX")
 	}
 	if desktop {
 		_, dd := shortLinkPaths()
@@ -125,65 +130,14 @@ func install(dir string, startMenu, desktop bool) error {
 	kv("DisplayVersion", "REG_SZ", "1.0.0")
 	kv("Publisher", "REG_SZ", "starryuri")
 	kv("InstallLocation", "REG_SZ", dir)
-	kv("UninstallString", "REG_SZ", fmt.Sprintf(`"%s" -uninstall`, unins))
+	kv("UninstallString", "REG_SZ", fmt.Sprintf(`"%s"`, unins))
 	kv("DisplayIcon", "REG_SZ", exePath)
 	kv("NoModify", "REG_DWORD", "1")
 	kv("NoRepair", "REG_DWORD", "1")
 	return nil
 }
 
-// uninstall removes shortcuts, registry, and files (self scheduled for reboot).
-func uninstall(dir string) {
-	if dir == "" {
-		dir = defaultDir()
-		if self, err := os.Executable(); err == nil {
-			dir = filepath.Dir(self)
-		}
-	}
-	sm, dd := shortLinkPaths()
-	_ = os.Remove(sm)
-	_ = os.Remove(filepath.Join(filepath.Dir(sm), "卸载 STARBOX.lnk"))
-	_ = os.Remove(dd)
-	_ = reg("delete", uninstallKey, "/f")
-
-	self, _ := os.Executable()
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			p := filepath.Join(dir, e.Name())
-			if e.IsDir() {
-				_ = os.RemoveAll(p)
-				continue
-			}
-			if self == p {
-				continue
-			}
-			_ = os.Remove(p)
-		}
-	}
-	if self != "" {
-		var k32 = syscall.NewLazyDLL("kernel32.dll")
-		moveFileEx := k32.NewProc("MoveFileExW")
-		if p, err := syscall.UTF16PtrFromString(self); err == nil {
-			moveFileEx.Call(uintptr(unsafe.Pointer(p)), 0, 0x4) // MOVEFILE_DELAY_UNTIL_REBOOT
-		}
-	}
-}
-
-// isUninstall returns true when running as an uninstaller, either because the
-// binary was copied to "unins.exe" (regardless of args) or "-uninstall" was given.
-func isUninstall() bool {
-	if strings.Contains(strings.ToLower(filepath.Base(os.Args[0])), "unins") {
-		return true
-	}
-	for _, a := range os.Args[1:] {
-		if a == "-uninstall" {
-			return true
-		}
-	}
-	return false
-}
-
-// ---- native fallback UI ----
+// ---- native helpers ----
 var (
 	shell32 = windows.NewLazyDLL("shell32.dll")
 	bBrowse = shell32.NewProc("SHBrowseForFolderW")
@@ -201,7 +155,6 @@ func msgBox(text, title string) {
 }
 
 // pickFolder shows the native Windows folder picker and returns the chosen path.
-// It is exposed to the WebView2 page as window.pickFolder().
 func pickFolder() string {
 	title, _ := windows.UTF16PtrFromString("选择安装位置")
 	bi := struct {
@@ -227,14 +180,14 @@ func pickFolder() string {
 }
 
 // ---- HTTP API for the WebView2 installer page ----
-func setHandlers(mux *http.ServeMux, mode string) {
+func setHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(installerHTML))
 	})
 	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"mode": mode, "defaultDir": defaultDir()})
+		_ = json.NewEncoder(w).Encode(map[string]any{"defaultDir": defaultDir()})
 	})
 	mux.HandleFunc("/install", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
@@ -270,18 +223,9 @@ func setHandlers(mux *http.ServeMux, mode string) {
 		}
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/uninstall", func(w http.ResponseWriter, r *http.Request) {
-		uninstall("")
-		_, _ = w.Write([]byte("ok"))
-	})
 }
 
 func main() {
-	mode := "install"
-	if isUninstall() {
-		mode = "uninstall"
-	}
-
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		msgBox("启动安装器失败："+err.Error(), "STARBOX 安装器")
@@ -291,15 +235,15 @@ func main() {
 	port := ln.Addr().(*net.TCPAddr).Port
 
 	mux := http.NewServeMux()
-	setHandlers(mux, mode)
+	setHandlers(mux)
 	go func() {
 		if err := http.Serve(ln, mux); err != nil && err != http.ErrServerClosed {
 			log.Printf("installer http serve: %v", err)
 		}
 	}()
 
-	url := fmt.Sprintf("http://127.0.0.1:%d/?mode=%s", port, mode)
-	dataPath := filepath.Join(os.TempDir(), "starbox_installer_"+mode)
+	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+	dataPath := filepath.Join(os.TempDir(), "starbox_installer")
 
 	wv := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     false,
@@ -307,15 +251,14 @@ func main() {
 		DataPath:  dataPath,
 		WindowOptions: webview2.WindowOptions{
 			Title:  "星匣 STARBOX 安装器",
-			Width:  620,
-			Height: 560,
+			Width:  920,
+			Height: 720,
 			IconId: 1, // app icon resource (rsrc)
 			Center: true,
 		},
 	})
 	if wv == nil {
-		// WebView2 runtime missing — fall back to a plain message.
-		msgBox("无法加载 WebView2 运行时。请先安装 Microsoft Edge WebView2 Runtime 后重试。\n\n或直接从源码构建后手动安装。", "STARBOX 安装器")
+		msgBox("无法加载 WebView2 运行时。请先安装 Microsoft Edge WebView2 Runtime 后重试。", "STARBOX 安装器")
 		return
 	}
 	defer wv.Destroy()
@@ -323,7 +266,7 @@ func main() {
 		log.Printf("bind pickFolder: %v", err)
 	}
 	wv.SetTitle("星匣 STARBOX 安装器")
-	wv.SetSize(620, 560, webview2.HintNone)
+	wv.SetSize(920, 720, webview2.HintNone)
 	wv.Navigate(url)
 	wv.Run()
 }

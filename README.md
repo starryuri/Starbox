@@ -40,6 +40,8 @@
 
 ```
 cmd/butler/             入口（-open / -desktop / -window / -tray / -config）
+cmd/setup/              安装器（WebView2 现代 UI，内嵌 starbox.exe + DLL + config + unins.exe）
+cmd/unin/               独立卸载器（unins.exe，与安装器分离）
 internal/config/        配置加载
 internal/sched/         调度器 + 任务执行
 internal/monitor/       各任务最新结果存储
