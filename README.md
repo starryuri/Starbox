@@ -59,9 +59,9 @@ config.example.json     配置模板（真实 config.json 已被 .gitignore 排�
 
 ## 安装（Windows · v1.0.0）
 
-从 [Releases](https://github.com/starryuri/Starbox/releases) 下载 **Starbox-Setup-1.0.0.exe**，双击即可安装到 `%LOCALAPPDATA%\STARBOX`（可用 `-dir <路径>` 指定位置）。安装会自动：打包 `starbox.exe` + `WebView2Loader.dll` + 默认 `config.json`，创建「开始菜单 / 桌面」快捷方式，写入控制面板卸载项，并生成 `unins.exe` 卸载程序。
+从 [Releases](https://github.com/starryuri/Starbox/releases) 下载 **Starbox-Setup-1.0.0.exe**，双击即可打开安装向导（原生 GUI，无黑框）。安装时可选：**安装位置**（默认 `%LOCALAPPDATA%\STARBOX`，可浏览更改）、是否**添加开始菜单快捷方式**、是否**添加桌面快捷方式**。安装会自动打包 `starbox.exe` + `WebView2Loader.dll` + 默认 `config.json`，写入控制面板卸载项，并生成 `unins.exe` 卸载程序。
 
-**卸载**：控制面板 →「应用和功能」→ STARBOX → 卸载；或直接运行安装目录下的 `unins.exe`。
+**卸载**：控制面板 →「应用和功能」→ STARBOX → 卸载；或直接运行安装目录下的 `unins.exe`（同样为 GUI 确认）。
 
 也可以从源码自行构建（见下）。
 
