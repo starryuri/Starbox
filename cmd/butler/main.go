@@ -35,7 +35,7 @@ func main() {
 	openUI := flag.Bool("open", false, "open the dashboard in your default browser on start")
 	asDesktop := flag.Bool("desktop", false, "open a native desktop window (starts the server if needed)")
 	asWindow := flag.Bool("window", false, "open a native desktop window pointing to an already-running server")
-	trayOn := flag.Bool("tray", true, "show a system tray icon (server mode)")
+	trayOn := flag.Bool("tray", false, "run silently in the system tray without opening the window")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -67,42 +67,48 @@ func main() {
 		return out
 	}
 
-	// window mode: start the server if it isn't already running, then show the window.
-	if *asWindow {
-		if !httpAlive(cfg.HTTPAddr) {
-			sched.Run(ctx, cfg, st)
+	// Only start the background server if no STARBOX server is already listening on
+	// the configured address. This lets a second launch (e.g. double-clicking the
+	// desktop icon while the app is already running) simply open a window instead of
+	// failing to re-bind the port.
+	serverRunning := cfg.HTTPAddr != "" && httpAlive(cfg.HTTPAddr)
+	if !serverRunning {
+		sched.Run(ctx, cfg, st)
+		go pushNotifications(ctx, st, allStores)
+		go trackAiring(ctx, allStores)
+		go trackTrending(ctx, allStores)
+		go rules.Run(ctx, func() map[string]string { return st.Snapshot() }, allStores)
+		if cfg.HTTPAddr != "" {
 			httpd.Start(cfg.HTTPAddr, st, kstore, dataDir, acc)
-		}
-		desk.Open(url)
-		return
-	}
-
-	sched.Run(ctx, cfg, st)
-	go pushNotifications(ctx, st, allStores)
-	go trackAiring(ctx, allStores)
-	go trackTrending(ctx, allStores)
-	go rules.Run(ctx, func() map[string]string { return st.Snapshot() }, allStores)
-
-	if cfg.HTTPAddr != "" {
-		httpd.Start(cfg.HTTPAddr, st, kstore, dataDir, acc)
-		if *openUI {
-			openBrowser(url)
+			if *openUI {
+				openBrowser(url)
+			}
 		}
 	}
 
-	if *asDesktop {
-		// 退出行为："tray" 则在窗口关闭后收纳到托盘继续运行；"exit" 则关闭即退出。
-		if cfgSettings.QuitAction != "exit" {
+	// Decide whether this invocation should show the desktop window. Default (no
+	// flags) and `-desktop` open the window; `-window` opens a window into a running
+	// server; `-tray` stays silent (server + tray only).
+	showWindow := *asWindow || *asDesktop || !*trayOn
+	if showWindow {
+		// If this process started the server and the user configured "tray" mode,
+		// show the tray icon so the app can be reopened/quit even after the window
+		// is closed.
+		ownsServer := !serverRunning
+		if ownsServer && cfgSettings.QuitAction != "exit" {
 			go tray.Run()
 		}
 		desk.Open(url)
-		if cfgSettings.QuitAction == "exit" {
+		// Keep the process alive (with the tray) after the window closes.
+		if ownsServer && cfgSettings.QuitAction != "exit" {
+			<-ctx.Done()
 			return
 		}
-		<-ctx.Done()
+		log.Println("window closed")
 		return
 	}
 
+	// Silent tray/server-only mode.
 	if *trayOn {
 		tray.Run() // blocks until the user quits from the tray
 	} else {

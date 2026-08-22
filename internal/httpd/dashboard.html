@@ -134,6 +134,27 @@
   /* detail view */
   #p-anime-detail .detail-cover-wrap{width:100%;max-width:300px;margin:0 auto}
   .d-section-title{font-size:11px;letter-spacing:1px;color:var(--bs-secondary-color);text-transform:uppercase;margin-bottom:8px}
+  /* overview hero + collections */
+  .hero{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 24px;border-radius:16px;margin-bottom:18px;background:linear-gradient(120deg,rgba(34,211,238,.16),rgba(139,92,246,.14));border:1px solid rgba(34,211,238,.25);box-shadow:0 8px 30px rgba(0,0,0,.25)}
+  .hero-hi{font-size:13px;color:var(--accent);font-weight:600;letter-spacing:.4px}
+  .hero-nm{font-size:22px;font-weight:800;margin-top:2px}
+  .hero-sub{font-size:12px;color:var(--bs-secondary-color);margin-top:3px}
+  .hero-right{flex-shrink:0}
+  .ov-collections{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+  .ov-card{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:14px;border:1px solid var(--bs-border-color);background:var(--bs-tertiary-bg);cursor:pointer;transition:.16s}
+  .ov-card:hover{transform:translateY(-2px);background:rgba(34,211,238,.10);border-color:rgba(34,211,238,.4)}
+  .ov-card .ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:18px;flex-shrink:0}
+  .ov-card .ct{font-size:13px;font-weight:700}
+  .ov-card .cn{font-size:12px;color:var(--bs-secondary-color);font-variant-numeric:tabular-nums}
+  .mini-list{display:flex;flex-direction:column;gap:2px;max-height:290px;overflow:auto}
+  .mini-row{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:8px;font-size:12.5px;cursor:pointer;transition:.12s}
+  .mini-row:hover{background:var(--bs-secondary-bg)}
+  .mini-row .m-ic{width:20px;text-align:center;flex-shrink:0}
+  .mini-row .m-body{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mini-row .m-body b{display:block;font-size:12.5px}
+  .mini-row .m-body span{color:var(--bs-secondary-color);font-size:11.5px}
+  .mini-row .m-time{color:var(--bs-secondary-color);font-size:11px;flex-shrink:0}
+  .mini-row .m-star{color:#ffd166;font-weight:700;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -169,15 +190,35 @@
   <main class="main">
     <!-- 概览 -->
     <section class="page show" id="p-overview">
-      <div class="page-head">
-        <div><h1>概览</h1><div class="sub">系统实时状态</div></div>
-        <div class="stat"><span id="updated">--</span><button class="btn btn-sm btn-outline-secondary" id="refresh">刷新</button></div>
+      <div class="hero">
+        <div>
+          <div class="hero-hi" id="heroHi">你好</div>
+          <div class="hero-nm" id="heroNick">欢迎来到星匣</div>
+          <div class="hero-sub" id="heroSub">你的次元，收于一匣</div>
+        </div>
+        <div class="hero-right"><span class="stat"><span id="updated">--</span><button class="btn btn-sm btn-outline-secondary" id="refresh">刷新</button></span></div>
       </div>
       <div class="row g-3">
         <div class="col-md-3"><div class="card h-100 border-0 shadow-sm"><div class="card-body"><div class="card-title text-uppercase text-secondary" style="font-size:12px;letter-spacing:1px">CPU</div><div class="ring"><svg viewBox="0 0 120 120"><defs><linearGradient id="gc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><circle cx="60" cy="60" r="52" fill="none" stroke="var(--bs-secondary-bg)" stroke-width="11"/><circle id="ringCpu" cx="60" cy="60" r="52" fill="none" stroke="url(#gc)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" transform="rotate(-90 60 60)"/></svg><div class="rv"><div><b id="cpuVal">--</b><span>%</span></div></div></div></div></div></div>
         <div class="col-md-3"><div class="card h-100 border-0 shadow-sm"><div class="card-body"><div class="card-title text-uppercase text-secondary" style="font-size:12px;letter-spacing:1px">内存</div><div class="ring"><svg viewBox="0 0 120 120"><defs><linearGradient id="gm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ec4899"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><circle cx="60" cy="60" r="52" fill="none" stroke="var(--bs-secondary-bg)" stroke-width="11"/><circle id="ringMem" cx="60" cy="60" r="52" fill="none" stroke="url(#gm)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" transform="rotate(-90 60 60)"/></svg><div class="rv"><div><b id="memVal">--</b><span id="memSub">GB</span></div></div></div></div></div></div>
         <div class="col-md-3"><div class="card h-100 border-0 shadow-sm"><div class="card-body"><div class="card-title text-uppercase text-secondary" style="font-size:12px;letter-spacing:1px">网络</div><div class="kv"><div class="r"><span class="k">下行</span><span class="v" id="rx">--</span></div><div class="r"><span class="k">上行</span><span class="v" id="tx">--</span></div><div class="r"><span class="k">运行</span><span class="v" id="up">--</span></div></div></div></div></div>
         <div class="col-md-3"><div class="card h-100 border-0 shadow-sm"><div class="card-body"><div class="card-title text-uppercase text-secondary" style="font-size:12px;letter-spacing:1px">磁盘</div><div class="rows" id="diskOverview"><div class="empty">等待数据</div></div></div></div></div>
+      </div>
+      <div class="d-section-title mt-4" style="margin-bottom:10px">我的收藏</div>
+      <div class="ov-collections" id="ovCollections"><div class="empty">加载中…</div></div>
+      <div class="row g-3 mt-1">
+        <div class="col-lg-6">
+          <div class="card border-0 shadow-sm h-100"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2"><div class="card-title text-uppercase text-secondary" style="font-size:12px;letter-spacing:1px">最近通知</div><button class="btn btn-sm btn-link p-0" onclick="gotoPage('notify')">查看全部</button></div>
+            <div id="ovNotif" class="mini-list"><div class="empty">暂无通知</div></div>
+          </div></div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card border-0 shadow-sm h-100"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2"><div class="card-title text-uppercase text-secondary" style="font-size:12px;letter-spacing:1px">🔥 GitHub 热门</div><button class="btn btn-sm btn-link p-0" onclick="gotoPage('insight')">查看全部</button></div>
+            <div id="ovTrend" class="mini-list"><div class="empty">加载中…</div></div>
+          </div></div>
+        </div>
       </div>
     </section>
 
@@ -391,8 +432,16 @@ function setThemeTo(theme){
 function applyTheme(){const t=(currentUser&&currentUser.theme)||localStorage.getItem(layoutKey('theme'))||'dark';setThemeTo(t);}
 function updateAcctBar(){
   const nm=$('acctName'), btn=$('acctBtn'); if(!nm||!btn)return;
-  if(currentUser){nm.textContent='👤 '+currentUser.nickname;btn.textContent='退出登录';}
-  else{nm.textContent='游客模式 · 数据存本地';btn.textContent='登录 / 注册';}
+  const hi=$('heroHi'), nick=$('heroNick');
+  if(currentUser){nm.textContent='👤 '+currentUser.nickname;btn.textContent='退出登录';if(nick)nick.textContent=currentUser.nickname;if(hi)hi.textContent='你好，';}
+  else{nm.textContent='游客模式 · 数据存本地';btn.textContent='登录 / 注册';if(nick)nick.textContent='欢迎来到星匣';if(hi)hi.textContent='你好';}
+  const sub=$('heroSub'); if(sub)sub.textContent='你的次元，收于一匣';}
+function gotoPage(p){
+  document.querySelectorAll('.side-nav a').forEach(x=>x.classList.remove('active'));
+  const link=document.querySelector('.side-nav a[data-p="'+p+'"]'); if(link)link.classList.add('active');
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('show'));
+  const pg=$('p-'+p); if(pg)pg.classList.add('show');
+  if(p==='kb')kbLoad(); if(p==='favs')favLoad(); if(p==='notify')notifyLoad(); if(p==='rules')rulesLoad(); if(p==='insight')insightLoad(); if(p==='settings')settingsLoad();
 }
 let authMode='login';
 function openAuthModal(hasAccounts){
@@ -423,7 +472,7 @@ async function authSubmit(){
     const txt=await r.text();
     if(!r.ok){if(ms)ms.textContent=txt;return;}
     currentUser=JSON.parse(txt).user||currentUser;
-    applyTheme(); updateAcctBar();
+    applyTheme(); updateAcctBar(); renderOverviewExtras();
     const mi=bootstrap.Modal.getInstance($('authModal')); if(mi)mi.hide();
     applyDetailLayout();
   }catch(e){if(ms)ms.textContent='网络错误，请重试';}
@@ -436,7 +485,7 @@ async function logout(){
 async function authInit(){
   try{
     const s=await (await fetch('/account/session')).json();
-    if(s&&s.user){currentUser=s.user;applyTheme();updateAcctBar();}
+    if(s&&s.user){currentUser=s.user;applyTheme();updateAcctBar();renderOverviewExtras();}
     else{updateAcctBar();setTimeout(()=>openAuthModal(s&&s.has_accounts),400);}
   }catch(e){updateAcctBar();setTimeout(()=>openAuthModal(false),400);}
 }
@@ -461,6 +510,58 @@ function renderOverview(){
   if(!found)dv.innerHTML='<div class="empty">暂无磁盘数据</div>';
 }
 
+/* overview: my-collections cards + recent notifications + trending preview */
+const OV_COLS=[
+  {tab:'anime',ic:'📺',label:'番剧',color:'#22d3ee'},
+  {tab:'books',ic:'📚',label:'书库',color:'#8b5cf6'},
+  {tab:'study',ic:'📖',label:'学习',color:'#a3e635'},
+  {tab:'games',ic:'🎮',label:'游戏',color:'#f59e0b'},
+  {tab:'favs',ic:'⭐',label:'收藏',color:'#ec4899'},
+  {tab:'notes',ic:'📝',label:'笔记',color:'#14b8a6'},
+];
+function gotoKb(tab){kbTab=tab||'anime';kbFilter='';kbEdit=null;gotoPage('kb');}
+function ovNotifIcon(t){const m={'订阅':'📡','邮箱':'✉️','追更':'🎬','系统':'⚙️','学习':'📖','规则':'🧩'};return m[t]||'🔔';}
+async function renderOverviewExtras(){
+  // collection counts
+  const box=$('ovCollections'); if(!box)return;
+  try{
+    const counts={};
+    const jobs=OV_COLS.filter(c=>c.tab!=='favs').map(async c=>{try{const d=await (await fetch('/kb/'+c.tab)).json();counts[c.tab]=(Array.isArray(d)?d.length:0);}catch(e){counts[c.tab]=0;}});
+    jobs.push((async()=>{try{const d=await (await fetch('/kb/favs')).json();counts.favs=(Array.isArray(d)?d.length:0);}catch(e){counts.favs=0;}})());
+    await Promise.all(jobs);
+    box.innerHTML='';
+    OV_COLS.forEach(c=>{const el=document.createElement('div');el.className='ov-card';el.style.borderColor='rgba(0,0,0,0)';
+      el.innerHTML='<div class="ic" style="background:'+c.color+'22;color:'+c.color+'">'+c.ic+'</div><div><div class="ct">'+esc(c.label)+'</div><div class="cn">'+esc(counts[c.tab]||0)+' 条</div></div>';
+      el.onclick=()=>{if(c.tab==='favs')gotoPage('favs');else gotoKb(c.tab);};
+      box.appendChild(el);
+    });
+  }catch(e){box.innerHTML='<div class="empty">加载失败</div>';}
+  // recent notifications
+  const nbox=$('ovNotif');
+  try{
+    const list=await (await fetch('/kb/notif')).json();
+    const arr=(Array.isArray(list)?list:[]).slice().sort((a,b)=>((b.data&&b.data.unix)||b.updated||0)-((a.data&&a.data.unix)||a.updated||0)).slice(0,6);
+    nbox.innerHTML='';
+    if(!arr.length)nbox.innerHTML='<div class="empty">暂无通知</div>';
+    arr.forEach(r=>{const d=r.data||{};const row=document.createElement('div');row.className='mini-row';
+      row.innerHTML='<span class="m-ic">'+ovNotifIcon(d.type)+'</span><div class="m-body"><b>'+esc(d.title||'')+'</b><span>'+esc(d.body||d.type||'')+'</span></div><span class="m-time">'+new Date((d.unix||r.updated||0)*1000).toLocaleDateString('zh-CN')+'</span>';
+      row.onclick=()=>gotoPage('notify');nbox.appendChild(row);
+    });
+  }catch(e){nbox.innerHTML='<div class="empty">暂无通知</div>';}
+  // trending preview
+  const tbox=$('ovTrend');
+  try{
+    const repos=await (await fetch('/github/trending?days=7')).json();
+    const arr=(Array.isArray(repos)?repos:[]).slice(0,6);
+    tbox.innerHTML='';
+    if(!arr.length)tbox.innerHTML='<div class="empty">暂无数据</div>';
+    arr.forEach(r=>{const row=document.createElement('div');row.className='mini-row';
+      row.innerHTML='<div class="m-body"><b>'+esc(r.name)+'</b><span>'+esc((r.desc||'').slice(0,60))+'</span></div><span class="m-star">★ '+esc(r.stars)+'</span>';
+      row.onclick=()=>{window.open(r.url,'_blank');};tbox.appendChild(row);
+    });
+  }catch(e){tbox.innerHTML='<div class="empty">暂无数据</div>';}
+}
+
 /* treemap */
 function squarify(vals,x,y,W,H){
   const out=[];let cx=x,cy=y,cw=W,ch=H,i=0;
@@ -475,6 +576,18 @@ function squarify(vals,x,y,W,H){
   return out;
 }
 let curTree=null, treeStack=[];
+// Drill into a treemap item. Drive-level tiles (mount with `\`) navigate to that
+// volume's root; folder tiles append to the current path.
+function goDrill(item){
+  if(curTree && curTree.drives){
+    treeStack.push('__drives__');
+    treeGo(item.mount||item.name);
+    return;
+  }
+  const base=(curTree&&curTree.path)||'';
+  treeStack.push(base);
+  treeGo(base ? base+'\\'+item.name : item.name);
+}
 function renderLegend(items){
   const lg=$('treeLegend'); if(!lg)return; const total=items.reduce((s,d)=>s+(d.size||0),0); lg.innerHTML='';
   if(!total||!items.length)return;
@@ -484,26 +597,34 @@ function renderLegend(items){
     const name=document.createElement('span');name.className='leg-name';name.textContent=d.name;
     const size=document.createElement('span');size.className='leg-size';size.textContent=human(d.size);
     const pc=document.createElement('span');pc.className='leg-pct';pc.textContent=pct.toFixed(2)+'%';
-    row.append(dot,name,size,pc);row.onclick=()=>{treeStack.push(curTree?curTree.path:'');treeGo((curTree?curTree.path:'')+'\\'+d.name);};lg.appendChild(row);});
+    row.append(dot,name,size,pc);row.onclick=()=>goDrill(d);lg.appendChild(row);});
 }
 function treeDraw(items,path){
   const wrap=$('treeWrap'); if(!wrap)return; $('treePath').textContent=path||''; $('treeBack').style.display=treeStack.length?'inline-block':'none';
   wrap.innerHTML=''; const total=items.reduce((s,d)=>s+(d.size||0),0);
   if(!items.length||!total){wrap.innerHTML='<div class="empty">暂无数据</div>';renderLegend([]);return;}
   const W=wrap.clientWidth||900,H=wrap.clientHeight||440; const unit=(W*H)/total;
-  const vals=items.slice().sort((a,b)=>b.size-a.size).map(d=>({name:d.name,area:d.size*unit,bytes:d.size}));
+  const vals=items.slice().sort((a,b)=>b.size-a.size).map(d=>({name:d.name,mount:d.mount,area:d.size*unit,bytes:d.size}));
   const rects=squarify(vals,0,0,W,H);
   rects.forEach((r,i)=>{const t=document.createElement('div');t.className='tile';const pct=r.bytes/total*100;
     t.style.left=(r.x/W*100)+'%';t.style.top=(r.y/H*100)+'%';t.style.width=(r.w/W*100)+'%';t.style.height=(r.h/H*100)+'%';
     t.style.background=`linear-gradient(135deg,${PAL[i%PAL.length]}cc,${PAL[(i+1)%PAL.length]}88)`;
     t.title=r.name+' · '+pct.toFixed(1)+'% · '+human(r.bytes)+' · 点击下钻';
     t.innerHTML='<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block">'+esc(r.name)+'</span>'+(r.w>80&&r.h>40?'<span class="sz">'+human(r.bytes)+'</span>':'');
-    if(r.w<60)t.classList.add('sm'); t.onclick=(e)=>{e.stopPropagation();treeStack.push(curTree?curTree.path:'');treeGo((curTree?curTree.path:'')+'\\'+r.name);}; wrap.appendChild(t);});
+    if(r.w<60)t.classList.add('sm'); t.onclick=(e)=>{e.stopPropagation();goDrill(r);}; wrap.appendChild(t);});
   renderLegend(items);
 }
 async function treeGo(path){try{const r=await fetch('/dir?path='+encodeURIComponent(path)+'&limit=12');const d=await r.json();curTree={path:d.path,items:d.items||[]};treeDraw(curTree.items,curTree.path);}catch(e){}}
-function treeBack(){const p=treeStack.pop();if(p)treeGo(p);}
-function renderDisk(){const wrap=$('treeWrap');if(!wrap)return;if(curTree){treeDraw(curTree.items,curTree.path);return;}let d=null;try{d=JSON.parse(S.disk_usage||'[]');}catch(e){}if(d&&d.path){curTree={path:d.path,items:d.items||[]};treeDraw(curTree.items,d.path);}else wrap.innerHTML='<div class="empty">暂无数据</div>';}
+async function loadDrives(){
+  try{
+    const res=await (await fetch('/drives')).json();
+    const items=(res||[]).filter(d=>d.total>0).map(d=>({name:d.mount, mount:d.mount, size:d.total}));
+    curTree={path:'',items:items,drives:true};
+    treeDraw(items,'本机磁盘 · 点击分区下钻');
+  }catch(e){ const wrap=$('treeWrap'); if(wrap)wrap.innerHTML='<div class="empty">暂无数据</div>'; renderLegend([]); }
+}
+function treeBack(){const p=treeStack.pop();if(p===undefined)return;if(p==='__drives__')loadDrives();else if(p!=='')treeGo(p);else loadDrives();}
+function renderDisk(){const wrap=$('treeWrap');if(!wrap)return;if(curTree){treeDraw(curTree.items,curTree.path);return;}let d=null;try{d=JSON.parse(S.disk_usage||'[]');}catch(e){}if(d&&d.path){curTree={path:d.path,items:d.items||[]};treeDraw(curTree.items,d.path);}else loadDrives();}
 function toggleFullscreen(){const el=$('p-disk');if(document.fullscreenElement){document.exitFullscreen();$('treeFS').innerHTML='&#x26F6; 全屏';}else{el.requestFullscreen();$('treeFS').innerHTML='&#x2715; 退出全屏';}}
 
 /* rss */
@@ -1025,7 +1146,7 @@ $('authGo').onclick=authSubmit;
 $('authPass').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();authSubmit();}});
 $('authSkip').onclick=authSkip;
 $('acctBtn').onclick=()=>{if(currentUser)logout();else openAuthModal(true);};
-authInit();load();setInterval(load,4000);setTimeout(()=>{renderDisk();},0);
+authInit();load().then(()=>setTimeout(renderOverviewExtras,0));setInterval(load,4000);setTimeout(()=>{renderDisk();},0);
 </script>
 </body>
 </html>

@@ -9,7 +9,7 @@ import (
 	"github.com/energye/systray"
 )
 
-//go:embed tray_icon.png
+//go:embed tray_icon.ico
 var trayIcon []byte
 
 // Run starts the system tray icon and blocks until the user chooses Quit.

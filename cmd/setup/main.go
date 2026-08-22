@@ -8,6 +8,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,6 +102,9 @@ func install(dir string, startMenu, desktop bool) error {
 	if startMenu {
 		sm, _ := shortLinkPaths()
 		shortcut(sm, exePath, "", dir, "STARBOX · 你的次元 · 收于一匣")
+		// Add an uninstall entry in the same start-menu folder so users can remove it
+		// without hunting through the control panel.
+		shortcut(filepath.Join(filepath.Dir(sm), "卸载 STARBOX.lnk"), filepath.Join(dir, "unins.exe"), "-uninstall", dir, "卸载 STARBOX")
 	}
 	if desktop {
 		_, dd := shortLinkPaths()
@@ -178,63 +182,116 @@ func main() {
 	var mw *walk.MainWindow
 	var pathEdit *walk.LineEdit
 	var cbStart, cbDesktop *walk.CheckBox
-	var status *walk.Label
+	var status, doneLabel *walk.Label
 	var installBtn *walk.PushButton
+	var installPanel, donePanel *walk.Composite
 
-	declarative.MainWindow{
+	mw2 := &declarative.MainWindow{
 		AssignTo: &mw,
 		Title:    "星匣 STARBOX 安装程序",
-		Size:     declarative.Size{Width: 460, Height: 330},
-		MinSize:  declarative.Size{Width: 460, Height: 330},
+		Size:     declarative.Size{Width: 500, Height: 380},
+		MinSize:  declarative.Size{Width: 480, Height: 340},
 		Layout:   declarative.VBox{},
 		Children: []declarative.Widget{
-			declarative.GroupBox{
-				Title:  "安装位置",
-				Layout: declarative.HBox{},
-				Children: []declarative.Widget{
-					declarative.LineEdit{AssignTo: &pathEdit, Text: defaultDir()},
-					declarative.PushButton{Text: "浏览…", OnClicked: func() {
-						dlg := walk.FileDialog{InitialDirPath: pathEdit.Text(), Title: "选择安装位置"}
-						if ok, err := dlg.ShowBrowseFolder(mw); err == nil && ok && dlg.FilePath != "" {
-							pathEdit.SetText(dlg.FilePath)
-						}
-					}},
-				},
-			},
-			declarative.GroupBox{
-				Title:  "选项",
-				Layout: declarative.VBox{},
-				Children: []declarative.Widget{
-					declarative.CheckBox{AssignTo: &cbStart, Text: "添加开始菜单快捷方式", Checked: true},
-					declarative.CheckBox{AssignTo: &cbDesktop, Text: "添加桌面快捷方式", Checked: true},
-				},
-			},
-			declarative.Label{AssignTo: &status, Text: "默认安装到 " + defaultDir()},
+			// Step 1: choose location + options + install
 			declarative.Composite{
-				Layout: declarative.HBox{},
+				AssignTo: &installPanel,
+				Layout:   declarative.VBox{},
 				Children: []declarative.Widget{
-					declarative.HSpacer{},
-					declarative.PushButton{Text: "安装", AssignTo: &installBtn, OnClicked: func() {
-						dir := pathEdit.Text()
-						if strings.TrimSpace(dir) == "" {
-							dir = defaultDir()
-						}
-						installBtn.SetEnabled(false)
-						status.SetText("正在安装…")
-						go func() {
-							err := install(dir, cbStart.Checked(), cbDesktop.Checked())
-							if err != nil {
-								status.SetText("安装失败：" + err.Error())
-							} else {
-								status.SetText("✔ 安装完成！可从开始菜单/桌面启动。")
-							}
-							installBtn.SetEnabled(true)
-						}()
-					}},
-					declarative.PushButton{Text: "取消", OnClicked: func() { mw.Close() }},
+					declarative.Label{
+						Text: "欢迎安装星匣 STARBOX\n你的次元，收于一匣。",
+						Font:          declarative.Font{PointSize: 12, Bold: true},
+						TextAlignment: declarative.AlignCenter,
+					},
+					declarative.GroupBox{
+						Title:  "安装位置",
+						Layout: declarative.HBox{},
+						Children: []declarative.Widget{
+							declarative.LineEdit{AssignTo: &pathEdit, Text: defaultDir(), MinSize: declarative.Size{Width: 300, Height: 0}},
+							declarative.PushButton{Text: "浏览…", OnClicked: func() {
+								dlg := walk.FileDialog{InitialDirPath: pathEdit.Text(), Title: "选择安装位置"}
+								if ok, err := dlg.ShowBrowseFolder(mw); err == nil && ok && dlg.FilePath != "" {
+									pathEdit.SetText(dlg.FilePath)
+								}
+							}},
+						},
+					},
+					declarative.GroupBox{
+						Title:  "选项",
+						Layout: declarative.VBox{},
+						Children: []declarative.Widget{
+							declarative.CheckBox{AssignTo: &cbStart, Text: "添加开始菜单快捷方式", Checked: true},
+							declarative.CheckBox{AssignTo: &cbDesktop, Text: "添加桌面快捷方式", Checked: true},
+						},
+					},
+					declarative.Label{AssignTo: &status, Text: "默认安装到 " + defaultDir(), TextAlignment: declarative.AlignCenter},
+					declarative.Composite{
+						Layout: declarative.HBox{},
+						Children: []declarative.Widget{
+							declarative.HSpacer{},
+							declarative.PushButton{Text: "安装", AssignTo: &installBtn, OnClicked: func() {
+								dir := pathEdit.Text()
+								if strings.TrimSpace(dir) == "" {
+									dir = defaultDir()
+								}
+								installBtn.SetEnabled(false)
+								status.SetText("正在安装…")
+								go func() {
+									err := install(dir, cbStart.Checked(), cbDesktop.Checked())
+									mw.Synchronize(func() {
+										if err != nil {
+											status.SetText("安装失败：" + err.Error())
+											installBtn.SetEnabled(true)
+											return
+										}
+										// Switch to the completion screen.
+										doneLabel.SetText("安装成功！\n已安装到：" + dir)
+										installPanel.SetVisible(false)
+										donePanel.SetVisible(true)
+										mw.SetTitle("星匣 STARBOX · 安装完成")
+									})
+								}()
+							}},
+							declarative.PushButton{Text: "取消", OnClicked: func() { mw.Close() }},
+						},
+					},
+				},
+			},
+			// Step 2: completion + launch now
+			declarative.Composite{
+				AssignTo: &donePanel,
+				Layout:   declarative.VBox{},
+				Visible:  false,
+				Children: []declarative.Widget{
+					declarative.Label{Text: "✔ 安装完成", Font: declarative.Font{PointSize: 20, Bold: true}, TextAlignment: declarative.AlignCenter},
+					declarative.VSpacer{},
+					declarative.Label{AssignTo: &doneLabel, TextAlignment: declarative.AlignCenter, Text: "安装成功！\n已安装到：" + defaultDir()},
+					declarative.Label{Text: "可从开始菜单 / 桌面快捷方式启动，或点击下方按钮立即运行。", TextAlignment: declarative.AlignCenter},
+					declarative.VSpacer{},
+					declarative.Composite{
+						Layout: declarative.HBox{},
+						Children: []declarative.Widget{
+							declarative.HSpacer{},
+							declarative.PushButton{Text: "🚀 立即运行", MinSize: declarative.Size{Width: 150, Height: 0}, OnClicked: func() {
+								dir := pathEdit.Text()
+								if strings.TrimSpace(dir) == "" {
+									dir = defaultDir()
+								}
+								exePath := filepath.Join(dir, "starbox.exe")
+								if _, err := os.Stat(exePath); err == nil {
+									_ = exec.Command(exePath, "-desktop").Start()
+								}
+								mw.Close()
+							}},
+							declarative.PushButton{Text: "完成", OnClicked: func() { mw.Close() }},
+						},
+					},
 				},
 			},
 		},
-	}.Create()
+	}
+	if err := mw2.Create(); err != nil {
+		log.Fatalf("create window: %v", err)
+	}
 	mw.Run()
 }

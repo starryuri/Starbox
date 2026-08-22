@@ -59,11 +59,18 @@ config.example.json     配置模板（真实 config.json 已被 .gitignore 排�
 
 ## 安装（Windows · v1.0.0）
 
-从 [Releases](https://github.com/starryuri/Starbox/releases) 下载 **Starbox-Setup-1.0.0.exe**，双击即可打开安装向导（原生 GUI，无黑框）。安装时可选：**安装位置**（默认 `%LOCALAPPDATA%\STARBOX`，可浏览更改）、是否**添加开始菜单快捷方式**、是否**添加桌面快捷方式**。安装会自动打包 `starbox.exe` + `WebView2Loader.dll` + 默认 `config.json`，写入控制面板卸载项，并生成 `unins.exe` 卸载程序。
+从 [Releases](https://github.com/starryuri/Starbox/releases) 下载 **Starbox-Setup-1.0.0.exe**，双击即可打开安装向导（原生 GUI，无黑框）。安装时可选：**安装位置**（默认 `%LOCALAPPDATA%\STARBOX`，可浏览更改）、是否**添加开始菜单快捷方式**、是否**添加桌面快捷方式**。安装完成后会**自动跳到「安装完成」界面**，并提供「🚀 立即运行」按钮（可直接启动 STARBOX 主界面）与「完成」按钮。安装会打包 `starbox.exe` + `WebView2Loader.dll` + 默认 `config.json`，写入控制面板卸载项，并在开始菜单生成 **「卸载 STARBOX」** 快捷方式，同时生成 `unins.exe` 卸载程序（GUI 确认）。
 
-**卸载**：控制面板 →「应用和功能」→ STARBOX → 卸载；或直接运行安装目录下的 `unins.exe`（同样为 GUI 确认）。
+**卸载**：控制面板 →「应用和功能」→ STARBOX → 卸载；开始菜单 → 卸载 STARBOX；或直接运行安装目录下的 `unins.exe`（均为 GUI 确认）。
 
 也可以从源码自行构建（见下）。
+
+### v1.0.0 改进要点
+
+- **启动即见主界面**：双击桌面 / 开始菜单图标直接打开主界面（不再静默只进托盘）。
+- **托盘图标修复**：Windows 托盘使用标准 `.ico`，不再透明/空白。
+- **登录保持**：注册 / 登录后关闭窗口再打开仍保持登录，直到主动「退出登录」。
+- **磁盘可视化**：磁盘页默认以「本机磁盘分区」为根，快捷展示每个分区占用，可点击下钻到任意目录。
 
 ## 构建
 
@@ -81,15 +88,15 @@ go build -ldflags="-H=windowsgui" -o setup.exe ./cmd/setup
 ## 运行
 
 ```powershell
-.\starbox.exe -config config.json -desktop   # 启动后台服务 + 弹出原生桌面窗口（推荐）
-.\starbox.exe -config config.json            # 仅后台常驻（无窗口，带托盘）
-.\starbox.exe -window                        # 只弹出窗口，指向已运行的服务
+.\starbox.exe -config config.json        # 启动服务 + 弹出原生桌面窗口（默认）
+.\starbox.exe -config config.json -window  # 只弹窗口，指向已运行的服务（托盘「打开面板」用）
+.\starbox.exe -config config.json -tray    # 仅后台常驻（无窗口，带托盘；开机自启动用）
 ```
 
-- `-desktop`：启动后台服务 + 弹出 WebView2 原生窗口。
-- `-window`：只弹窗口，连接已在运行的服务。
-- `-tray`（默认开）：常驻时带系统托盘图标（右键：打开面板 / 刷新 / 退出）。
-- 界面也可在浏览器打开 `http://127.0.0.1:8765/`；`/api` 返回原始 JSON，`/health` 健康检查。
+- **默认（无参数）**：启动后台服务 + 弹出 WebView2 原生窗口，并带系统托盘图标；关闭窗口后按「设置 → 关闭主界面后」的行为决定是收纳到托盘还是退出。**即双击桌面/开始菜单图标会直接打开主界面。**
+- `-window`：只弹窗口，连接已在运行的服务（托盘菜单「打开面板 / 刷新面板」）。
+- `-tray`：仅后台常驻（无窗口，带系统托盘）。开机自启动默认以 `-tray` 静默启动，不打扰。
+- 界面也可在浏览器打开 `http://127.0.0.1:8765/`；`/api` 返回原始 JSON，`/health` 健康检查，`/drives` 返回磁盘分区信息。
 
 ## 配置（config.json）
 

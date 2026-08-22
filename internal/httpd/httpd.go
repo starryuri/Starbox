@@ -24,6 +24,8 @@ import (
 	"butler/internal/monitor"
 	"butler/internal/rss"
 	"butler/internal/settings"
+
+	"github.com/shirou/gopsutil/v3/disk"
 )
 
 //go:embed dashboard.html
@@ -80,7 +82,11 @@ func Start(addr string, st *monitor.State, kstore *kb.Store, dataDir string, acc
 		return c.Value
 	}
 	setSession := func(w http.ResponseWriter, tok string) {
-		http.SetCookie(w, &http.Cookie{Name: "starbox_session", Value: tok, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+		// Use a long-lived cookie so WebView2 persists it to disk (the window's
+		// user-data folder is stable across restarts). Without MaxAge/Expires this
+		// would be a session cookie that is wiped every time the window closes,
+		// forcing a re-login on every reopen.
+		http.SetCookie(w, &http.Cookie{Name: "starbox_session", Value: tok, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 365 * 24 * 3600})
 	}
 	userJSON := func(u account.User) map[string]any {
 		return map[string]any{"id": u.ID, "nickname": u.Nickname, "theme": u.Theme}
@@ -279,6 +285,31 @@ func Start(addr string, st *monitor.State, kstore *kb.Store, dataDir string, acc
 		_ = settings.Save(dataDir, s)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(s)
+	})
+
+	mux.HandleFunc("/drives", func(w http.ResponseWriter, r *http.Request) {
+		parts, err := disk.Partitions(true)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		out := []map[string]any{}
+		for _, p := range parts {
+			u, err := disk.Usage(p.Mountpoint)
+			if err != nil {
+				continue
+			}
+			out = append(out, map[string]any{
+				"name":    p.Mountpoint,
+				"mount":   p.Mountpoint,
+				"total":   u.Total,
+				"free":    u.Free,
+				"used":    u.Used,
+				"usedpct": u.UsedPercent,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
 	})
 
 	mux.HandleFunc("/dir", func(w http.ResponseWriter, r *http.Request) {
