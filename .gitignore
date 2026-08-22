@@ -23,3 +23,6 @@ memory/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# ==== installer payload (built binaries) ====
+cmd/setup/payload/

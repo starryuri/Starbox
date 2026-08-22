@@ -117,6 +117,21 @@ func Start(addr string, st *monitor.State, kstore *kb.Store, dataDir string, acc
 		userStores[uid] = s
 		return s
 	}
+	// seedAnime adds the flagship 恋爱小行星 entry if an account's anime list is empty.
+	seedAnime := func(uid string) {
+		us := storeFor(uid)
+		if recs, err := us.List("anime"); err == nil && len(recs) > 0 {
+			return
+		}
+		_, _ = us.Add("anime", map[string]interface{}{
+			"title": "恋爱小行星", "status": "想追", "total": 12, "watched": "",
+			"air_start": "2020-01-03", "duration": 24, "rate": 6.9,
+			"bgm_id": 276150, "anilist_id": "", "xid": "",
+			"cover": "https://bgmimg.anibt.net/pic/cover/l/eb/9f/276150_tJJGx.jpg",
+			"link": "https://bgm.tv/subject/276150",
+			"note": "高中天文社少女真中苍与地学社的蓝原诗织，因一颗小行星而结缘，共同追逐「发现小行星」的梦想。",
+		})
+	}
 	// migrateGuestTo copies existing guest/global data (kb collections + book/essay
 	// files) into a newly registered account so first login isn't empty.
 	migrateGuestTo := func(uid string) {
@@ -192,6 +207,7 @@ func Start(addr string, st *monitor.State, kstore *kb.Store, dataDir string, acc
 		}
 		setSession(w, tok)
 		go migrateGuestTo(u.ID) // carry existing guest data into the new account
+		go seedAnime(u.ID)      // if the account has no anime yet, greet with 恋爱小行星
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"user": userJSON(u)})
 	})
