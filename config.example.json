@@ -1,0 +1,33 @@
+{
+  "http_addr": "127.0.0.1:8765",
+  "tasks": [
+    {
+      "id": "system_metrics",
+      "type": "metrics",
+      "every_seconds": 30
+    },
+    {
+      "id": "disk_usage",
+      "type": "diskusage",
+      "every_seconds": 900,
+      "path": "C:\\Users\\YourName",
+      "limit": 12
+    },
+    {
+      "id": "rss_example",
+      "type": "rss",
+      "every_seconds": 3600,
+      "url": "https://example.com/feed",
+      "limit": 5,
+      "timeout_seconds": 20
+    },
+    {
+      "id": "sys_maintain",
+      "type": "exec",
+      "every_seconds": 600,
+      "command": "python",
+      "args": ["plugins/sys/maintain.py"],
+      "timeout_seconds": 30
+    }
+  ]
+}

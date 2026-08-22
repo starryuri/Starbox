@@ -1,0 +1,25 @@
+# ===== 用户配置与个人数据（含敏感 token，绝不上传）=====
+config.json
+data/
+*.local.json
+
+# ===== 构建产物 =====
+butler-gui.exe
+butler.exe
+*.exe
+*~
+
+# ===== 本地工具链 =====
+.tools/
+
+# ===== 临时 / 缓存 =====
+.cowork-temp/
+node_modules/
+
+# ===== 代理记忆 / 私有 =====
+memory/
+
+# ===== 系统文件 =====
+Thumbs.db
+.DS_Store
+desktop.ini
