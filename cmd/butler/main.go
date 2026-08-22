@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"butler/internal/anime"
 	"butler/internal/account"
@@ -28,7 +29,58 @@ import (
 	"butler/internal/sched"
 	"butler/internal/settings"
 	"butler/internal/tray"
+
+	"golang.org/x/sys/windows"
 )
+
+// ---- single instance ----
+var (
+	k32           = windows.NewLazyDLL("kernel32.dll")
+	mCreateMutex  = k32.NewProc("CreateMutexW")
+	mCloseHandle  = k32.NewProc("CloseHandle")
+	u32           = windows.NewLazyDLL("user32.dll")
+	wFindWindow   = u32.NewProc("FindWindowW")
+	wSetForeground = u32.NewProc("SetForegroundWindow")
+	wShowWindow   = u32.NewProc("ShowWindow")
+)
+
+const singleInstanceName = "STARBOX_SingleInstance"
+
+// acquireSingle claims a named mutex so only one STARBOX server/tray instance runs.
+// Returns (true, release) if this process is the primary; (false, nil) if another
+// instance is already running.
+func acquireSingle() (bool, func()) {
+	name, err := windows.UTF16PtrFromString(singleInstanceName)
+	if err != nil {
+		return true, func() {}
+	}
+	r, _, ecall := mCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
+	if r == 0 {
+		// Could not create/open the mutex; allow running rather than block.
+		return true, func() {}
+	}
+	if ecall == windows.ERROR_ALREADY_EXISTS {
+		mCloseHandle.Call(r)
+		return false, nil
+	}
+	return true, func() { mCloseHandle.Call(r) }
+}
+
+// bringToFront finds the STARBOX desktop window by title and restores + focuses
+// it. Returns false if no window is currently open.
+func bringToFront(title string) bool {
+	t, err := windows.UTF16PtrFromString(title)
+	if err != nil {
+		return false
+	}
+	hwnd, _, _ := wFindWindow.Call(0, uintptr(unsafe.Pointer(t)))
+	if hwnd == 0 {
+		return false
+	}
+	wShowWindow.Call(hwnd, 9) // SW_RESTORE
+	wSetForeground.Call(hwnd)
+	return true
+}
 
 func main() {
 	cfgPath := flag.String("config", "config.json", "path to config file")
@@ -65,6 +117,20 @@ func main() {
 			out = append(out, kb.New(filepath.Join(dataDir, "users", uid)))
 		}
 		return out
+	}
+
+	// Limit to a single running instance. If a STARBOX process is already running,
+	// this duplicate just brings the window to the front (or reopens one into the
+	// running server) and exits instead of spawning a second server/tray/copy.
+	if primary, release := acquireSingle(); !primary {
+		if cfg.HTTPAddr != "" && httpAlive(cfg.HTTPAddr) {
+			if !bringToFront("星匣 STARBOX") {
+				desk.Open(url)
+			}
+		}
+		return
+	} else {
+		defer release()
 	}
 
 	// Only start the background server if no STARBOX server is already listening on

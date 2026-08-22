@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STARBOX 安装器</title>
+<style>
+  :root{--bg:#0c1020;--panel:#141a2e;--panel2:#1b2340;--border:#283050;--accent:#22d3ee;--accent2:#8b5cf6;--pink:#ec4899;--lime:#a3e635;--amber:#f59e0b;--red:#f87171;--text:#e7ecf7;--muted:#93a0bd}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:"Segoe UI",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--text);background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .card{width:560px;max-width:94vw;background:var(--panel);border:1px solid var(--border);border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.55);overflow:hidden}
+  /* header */
+  .hd{display:flex;align-items:center;gap:14px;padding:22px 26px;background:linear-gradient(120deg,rgba(34,211,238,.20),rgba(139,92,246,.20));border-bottom:1px solid var(--border)}
+  .logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0b0e17;font-weight:800;font-size:22px;box-shadow:0 0 22px rgba(34,211,238,.45)}
+  .hd .tt{font-size:19px;font-weight:800;letter-spacing:.4px;line-height:1.1}
+  .hd .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .mode{margin-left:auto;font-size:12px;font-weight:700;padding:5px 14px;border-radius:200px;background:rgba(255,255,255,.10);color:var(--text);border:1px solid var(--border)}
+  /* body */
+  main{padding:26px 30px 28px}
+  h2{font-size:17px;margin:0 0 6px;font-weight:700}
+  .muted{color:var(--muted);font-size:13px;line-height:1.7;margin:0 0 18px}
+  .field{display:flex;gap:10px;margin-bottom:16px}
+  .field input{flex:1;padding:10px 13px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px;outline:none}
+  .field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(34,211,238,.18)}
+  .field button{padding:10px 16px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px;cursor:pointer}
+  .field button:hover{background:#222c4d}
+  .opts{display:flex;flex-direction:column;gap:11px;margin-bottom:22px}
+  .opts label{display:flex;align-items:center;gap:10px;font-size:13.5px;cursor:pointer;color:var(--text)}
+  .opts input{width:17px;height:17px;accent-color:var(--accent)}
+  .foot{display:flex;justify-content:flex-end;gap:10px}
+  button{padding:11px 22px;border-radius:10px;border:none;font-size:13.5px;font-weight:600;cursor:pointer;transition:.15s}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0b0e17}
+  .primary:hover{filter:brightness(1.1)}
+  .ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
+  .ghost:hover{background:var(--panel2)}
+  .danger{background:linear-gradient(135deg,var(--red),#b91c1c);color:#fff}
+  .danger:hover{filter:brightness(1.08)}
+  .status{font-size:12.5px;min-height:18px;margin-top:14px;color:var(--muted)}
+  .status.err{color:var(--red)}
+  .status.ok{color:var(--lime)}
+  .center{text-align:center}
+  .big-ic{font-size:46px;line-height:1;margin-bottom:8px}
+  .ok-ic{color:var(--lime)}
+  .warn-ic{color:var(--amber)}
+  .pathbox{margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--panel2);border:1px solid var(--border);font-size:12.5px;color:var(--muted);word-break:break-all}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="card">
+  <header class="hd">
+    <div class="logo">&#10022;</div>
+    <div><div class="tt">STARBOX 星匣</div><div class="sub">你的次元 · 收于一匣</div></div>
+    <div class="mode" id="modeTag">安装</div>
+  </header>
+  <main>
+    <!-- install -->
+    <section id="stepForm" hidden>
+      <h2>选择安装位置</h2>
+      <p class="muted">默认安装到 <code style="color:var(--accent)">%LOCALAPPDATA%\STARBOX</code>，你可以修改路径。</p>
+      <div class="field">
+        <input id="dir" type="text" spellcheck="false" autocomplete="off" />
+        <button id="browse">浏览…</button>
+      </div>
+      <div class="opts">
+        <label><input type="checkbox" id="cbStart" checked> 添加开始菜单快捷方式</label>
+        <label><input type="checkbox" id="cbDesktop" checked> 添加桌面快捷方式</label>
+      </div>
+      <div class="foot">
+        <button class="ghost" id="cancel">取消</button>
+        <button class="primary" id="install">安装</button>
+      </div>
+      <div id="status" class="status"></div>
+    </section>
+    <!-- install done -->
+    <section id="stepDone" hidden>
+      <div class="center"><div class="big-ic ok-ic">&#10004;</div></div>
+      <h2 class="center">安装完成</h2>
+      <p class="muted center">STARBOX 已安装到你的电脑，可从开始菜单 / 桌面启动。</p>
+      <div class="pathbox" id="donePath"></div>
+      <div class="foot" style="margin-top:22px">
+        <button class="ghost" id="doneClose">完成</button>
+        <button class="primary" id="launch">&#128640; 立即运行</button>
+      </div>
+    </section>
+    <!-- uninstall -->
+    <section id="stepUninstall" hidden>
+      <div class="center"><div class="big-ic warn-ic">&#9888;</div></div>
+      <h2 class="center">卸载 STARBOX</h2>
+      <p class="muted center">将删除安装目录、快捷方式与卸载注册表项。此操作不可撤销，确定继续吗？</p>
+      <div class="foot" style="margin-top:22px">
+        <button class="ghost" id="uniCancel">取消</button>
+        <button class="danger" id="uniGo">卸载</button>
+      </div>
+      <div id="uniStatus" class="status"></div>
+    </section>
+    <!-- uninstall done -->
+    <section id="stepUniDone" hidden>
+      <div class="center"><div class="big-ic ok-ic">&#10004;</div></div>
+      <h2 class="center">已卸载</h2>
+      <p class="muted center">STARBOX 已从本机移除，相关文件已清理。</p>
+      <div class="foot" style="margin-top:22px">
+        <button class="primary" id="uniDone">完成</button>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const qs=new URLSearchParams(location.search);
+const mode=qs.get('mode')||'install';
+let dir='';
+function status(id,txt,cls){const e=$(id);if(e){e.textContent=txt;e.className='status '+(cls||'');}}
+async function boot(){
+  try{
+    const st=await (await fetch('/state')).json();
+    dir=(st&&st.defaultDir)||'';
+    if($('dir'))$('dir').value=dir;
+  }catch(e){}
+  $('modeTag').textContent=(mode==='uninstall')?'卸载':'安装';
+  if(mode==='uninstall'){$('stepUninstall').hidden=false;}
+  else{$('stepForm').hidden=false;}
+}
+$('browse').onclick=async()=>{
+  try{const p=await window.pickFolder();if(p){$('dir').value=p;dir=p;}}catch(e){}
+};
+$('install').onclick=async()=>{
+  dir=($('dir').value||'').trim()||dir;
+  const btn=$('install');btn.disabled=true;
+  status('status','正在安装…','');
+  try{
+    const r=await fetch('/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:dir,startMenu:$('cbStart').checked,desktop:$('cbDesktop').checked})});
+    const d=await r.json();
+    if(!r.ok){status('status','安装失败：'+(d.error||('HTTP '+r.status)),'err');btn.disabled=false;return;}
+    dir=d.dir||dir;
+    $('donePath').textContent='已安装到：'+dir;
+    $('stepForm').hidden=true;$('stepDone').hidden=false;
+  }catch(e){status('status','安装失败：'+e.message,'err');btn.disabled=false;}
+};
+$('launch').onclick=async()=>{try{await fetch('/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:dir})});}catch(e){}window.close();};
+$('doneClose').onclick=()=>window.close();
+$('cancel').onclick=()=>window.close();
+$('uniGo').onclick=async()=>{
+  const btn=$('uniGo');btn.disabled=true;
+  status('uniStatus','正在卸载…','');
+  try{await fetch('/uninstall',{method:'POST'});}catch(e){}
+  $('stepUninstall').hidden=true;$('stepUniDone').hidden=false;
+};
+$('uniCancel').onclick=()=>window.close();
+$('uniDone').onclick=()=>window.close();
+boot();
+</script>
+</body>
+</html>

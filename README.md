@@ -59,16 +59,18 @@ config.example.json     配置模板（真实 config.json 已被 .gitignore 排�
 
 ## 安装（Windows · v1.0.0）
 
-从 [Releases](https://github.com/starryuri/Starbox/releases) 下载 **Starbox-Setup-1.0.0.exe**，双击即可打开安装向导（原生 GUI，无黑框）。安装时可选：**安装位置**（默认 `%LOCALAPPDATA%\STARBOX`，可浏览更改）、是否**添加开始菜单快捷方式**、是否**添加桌面快捷方式**。安装完成后会**自动跳到「安装完成」界面**，并提供「🚀 立即运行」按钮（可直接启动 STARBOX 主界面）与「完成」按钮。安装会打包 `starbox.exe` + `WebView2Loader.dll` + 默认 `config.json`，写入控制面板卸载项，并在开始菜单生成 **「卸载 STARBOX」** 快捷方式，同时生成 `unins.exe` 卸载程序（GUI 确认）。
+从 [Releases](https://github.com/starryuri/Starbox/releases) 下载 **Starbox-Setup-1.0.0.exe**，双击即可打开安装向导（**WebView2 现代 UI**，无黑框）。安装时可选：**安装位置**（默认 `%LOCALAPPDATA%\STARBOX`，可「浏览…」或用文本框修改）、是否**添加开始菜单快捷方式**、是否**添加桌面快捷方式**。安装完成后会**自动跳到「安装完成」界面**，并提供「🚀 立即运行」按钮（可直接启动 STARBOX 主界面）与「完成」按钮。安装会打包 `starbox.exe` + `WebView2Loader.dll` + 默认 `config.json`，写入控制面板卸载项，并在开始菜单生成 **「卸载 STARBOX」** 快捷方式，同时生成 `unins.exe` 卸载程序。
 
-**卸载**：控制面板 →「应用和功能」→ STARBOX → 卸载；开始菜单 → 卸载 STARBOX；或直接运行安装目录下的 `unins.exe`（均为 GUI 确认）。
+**卸载**：控制面板 →「应用和功能」→ STARBOX → 卸载；开始菜单 → 卸载 STARBOX；或直接运行安装目录下的 `unins.exe`（均为 GUI 确认）。**`unins.exe` 无论是否带 `-uninstall` 参数都会进入卸载界面**。
 
 也可以从源码自行构建（见下）。
 
 ### v1.0.0 改进要点
 
+- **现代安装器**：安装/卸载程序改为 WebView2 精美界面（暗色拟物、渐变头部），安装完成自动跳转并提供「立即运行」。
 - **启动即见主界面**：双击桌面 / 开始菜单图标直接打开主界面（不再静默只进托盘）。
-- **托盘图标修复**：Windows 托盘使用标准 `.ico`，不再透明/空白。
+- **托盘图标修复**：Windows 托盘使用标准 `.ico`，不再透明/空白；托盘菜单为「打开应用 / 关闭应用」，点击托盘图标即弹出。
+- **单个实例**：同一时间只运行一份 STARBOX（命名互斥锁），重复启动会聚焦已有窗口而非再开一份。
 - **登录保持**：注册 / 登录后关闭窗口再打开仍保持登录，直到主动「退出登录」。
 - **磁盘可视化**：磁盘页默认以「本机磁盘分区」为根，快捷展示每个分区占用，可点击下钻到任意目录。
 

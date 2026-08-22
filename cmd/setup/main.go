@@ -1,14 +1,19 @@
 //go:build windows
 
-// Starbox setup — a native Windows GUI installer / uninstaller.
-//   setup.exe                -> GUI install (pick dir / start menu / desktop)
-//   setup.exe -uninstall     -> GUI uninstall
+// Starbox setup — a native Windows GUI installer / uninstaller built on WebView2.
+//
+//	setup.exe               -> GUI install (pick dir / start menu / desktop)
+//	setup.exe -uninstall    -> GUI uninstall
+//	unins.exe (any name w/ "unins") -> always uninstall, even with no args
 package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,8 +21,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/lxn/walk"
-	"github.com/lxn/walk/declarative"
+	"github.com/jchv/go-webview2"
+	"golang.org/x/sys/windows"
 )
 
 //go:embed payload/starbox.exe
@@ -28,6 +33,9 @@ var payloadDLL []byte
 
 //go:embed payload/config.json
 var payloadCfg []byte
+
+//go:embed installer.html
+var installerHTML string
 
 const (
 	runKey          = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
@@ -102,8 +110,7 @@ func install(dir string, startMenu, desktop bool) error {
 	if startMenu {
 		sm, _ := shortLinkPaths()
 		shortcut(sm, exePath, "", dir, "STARBOX · 你的次元 · 收于一匣")
-		// Add an uninstall entry in the same start-menu folder so users can remove it
-		// without hunting through the control panel.
+		// Add an uninstall entry in the same start-menu folder.
 		shortcut(filepath.Join(filepath.Dir(sm), "卸载 STARBOX.lnk"), filepath.Join(dir, "unins.exe"), "-uninstall", dir, "卸载 STARBOX")
 	}
 	if desktop {
@@ -135,6 +142,7 @@ func uninstall(dir string) {
 	}
 	sm, dd := shortLinkPaths()
 	_ = os.Remove(sm)
+	_ = os.Remove(filepath.Join(filepath.Dir(sm), "卸载 STARBOX.lnk"))
 	_ = os.Remove(dd)
 	_ = reg("delete", uninstallKey, "/f")
 
@@ -161,7 +169,12 @@ func uninstall(dir string) {
 	}
 }
 
+// isUninstall returns true when running as an uninstaller, either because the
+// binary was copied to "unins.exe" (regardless of args) or "-uninstall" was given.
 func isUninstall() bool {
+	if strings.Contains(strings.ToLower(filepath.Base(os.Args[0])), "unins") {
+		return true
+	}
 	for _, a := range os.Args[1:] {
 		if a == "-uninstall" {
 			return true
@@ -170,128 +183,147 @@ func isUninstall() bool {
 	return false
 }
 
-func main() {
-	if isUninstall() {
-		if walk.MsgBox(nil, "卸载 STARBOX", "确定要卸载 STARBOX 吗？将删除安装目录、快捷方式与卸载注册表项。", walk.MsgBoxYesNo) == walk.DlgCmdYes {
-			uninstall("")
-			walk.MsgBox(nil, "STARBOX", "已卸载 STARBOX 并清理相关文件。", walk.MsgBoxOK)
+// ---- native fallback UI ----
+var (
+	shell32 = windows.NewLazyDLL("shell32.dll")
+	bBrowse = shell32.NewProc("SHBrowseForFolderW")
+	bPath   = shell32.NewProc("SHGetPathFromIDListW")
+	ole32   = windows.NewLazyDLL("ole32.dll")
+	bCoFree = ole32.NewProc("CoTaskMemFree")
+	user32  = windows.NewLazyDLL("user32.dll")
+	bMsgBox = user32.NewProc("MessageBoxW")
+)
+
+func msgBox(text, title string) {
+	t, _ := windows.UTF16PtrFromString(title)
+	c, _ := windows.UTF16PtrFromString(text)
+	bMsgBox.Call(0, uintptr(unsafe.Pointer(c)), uintptr(unsafe.Pointer(t)), 0)
+}
+
+// pickFolder shows the native Windows folder picker and returns the chosen path.
+// It is exposed to the WebView2 page as window.pickFolder().
+func pickFolder() string {
+	title, _ := windows.UTF16PtrFromString("选择安装位置")
+	bi := struct {
+		HwndOwner      uintptr
+		PidlRoot       uintptr
+		PszDisplayName uintptr
+		LpszTitle      *uint16
+		UlFlags        uint32
+		Lpfn           uintptr
+		LParam         uintptr
+		IImage         int32
+	}{HwndOwner: 0, PidlRoot: 0, PszDisplayName: 0, LpszTitle: title, UlFlags: 0x1 /*BIF_RETURNONLYFSDIRS*/ | 0x40 /*BIF_NEWDIALOGSTYLE*/, Lpfn: 0, LParam: 0, IImage: 0}
+	r, _, _ := bBrowse.Call(uintptr(unsafe.Pointer(&bi)))
+	if r == 0 {
+		return ""
+	}
+	defer bCoFree.Call(r)
+	var buf [windows.MAX_PATH]uint16
+	if ok, _, _ := bPath.Call(r, uintptr(unsafe.Pointer(&buf[0]))); ok == 0 {
+		return ""
+	}
+	return windows.UTF16ToString(buf[:])
+}
+
+// ---- HTTP API for the WebView2 installer page ----
+func setHandlers(mux *http.ServeMux, mode string) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(installerHTML))
+	})
+	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"mode": mode, "defaultDir": defaultDir()})
+	})
+	mux.HandleFunc("/install", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Dir       string `json:"dir"`
+			StartMenu bool   `json:"startMenu"`
+			Desktop   bool   `json:"desktop"`
 		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		if strings.TrimSpace(b.Dir) == "" {
+			b.Dir = defaultDir()
+		}
+		if err := install(b.Dir, b.StartMenu, b.Desktop); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "dir": b.Dir})
+	})
+	mux.HandleFunc("/launch", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Dir string `json:"dir"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		dir := b.Dir
+		if strings.TrimSpace(dir) == "" {
+			dir = defaultDir()
+		}
+		exe := filepath.Join(dir, "starbox.exe")
+		if _, err := os.Stat(exe); err == nil {
+			_ = exec.Command(exe, "-desktop").Start()
+		}
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/uninstall", func(w http.ResponseWriter, r *http.Request) {
+		uninstall("")
+		_, _ = w.Write([]byte("ok"))
+	})
+}
+
+func main() {
+	mode := "install"
+	if isUninstall() {
+		mode = "uninstall"
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		msgBox("启动安装器失败："+err.Error(), "STARBOX 安装器")
 		return
 	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
 
-	var mw *walk.MainWindow
-	var pathEdit *walk.LineEdit
-	var cbStart, cbDesktop *walk.CheckBox
-	var status, doneLabel *walk.Label
-	var installBtn *walk.PushButton
-	var installPanel, donePanel *walk.Composite
+	mux := http.NewServeMux()
+	setHandlers(mux, mode)
+	go func() {
+		if err := http.Serve(ln, mux); err != nil && err != http.ErrServerClosed {
+			log.Printf("installer http serve: %v", err)
+		}
+	}()
 
-	mw2 := &declarative.MainWindow{
-		AssignTo: &mw,
-		Title:    "星匣 STARBOX 安装程序",
-		Size:     declarative.Size{Width: 500, Height: 380},
-		MinSize:  declarative.Size{Width: 480, Height: 340},
-		Layout:   declarative.VBox{},
-		Children: []declarative.Widget{
-			// Step 1: choose location + options + install
-			declarative.Composite{
-				AssignTo: &installPanel,
-				Layout:   declarative.VBox{},
-				Children: []declarative.Widget{
-					declarative.Label{
-						Text: "欢迎安装星匣 STARBOX\n你的次元，收于一匣。",
-						Font:          declarative.Font{PointSize: 12, Bold: true},
-						TextAlignment: declarative.AlignCenter,
-					},
-					declarative.GroupBox{
-						Title:  "安装位置",
-						Layout: declarative.HBox{},
-						Children: []declarative.Widget{
-							declarative.LineEdit{AssignTo: &pathEdit, Text: defaultDir(), MinSize: declarative.Size{Width: 300, Height: 0}},
-							declarative.PushButton{Text: "浏览…", OnClicked: func() {
-								dlg := walk.FileDialog{InitialDirPath: pathEdit.Text(), Title: "选择安装位置"}
-								if ok, err := dlg.ShowBrowseFolder(mw); err == nil && ok && dlg.FilePath != "" {
-									pathEdit.SetText(dlg.FilePath)
-								}
-							}},
-						},
-					},
-					declarative.GroupBox{
-						Title:  "选项",
-						Layout: declarative.VBox{},
-						Children: []declarative.Widget{
-							declarative.CheckBox{AssignTo: &cbStart, Text: "添加开始菜单快捷方式", Checked: true},
-							declarative.CheckBox{AssignTo: &cbDesktop, Text: "添加桌面快捷方式", Checked: true},
-						},
-					},
-					declarative.Label{AssignTo: &status, Text: "默认安装到 " + defaultDir(), TextAlignment: declarative.AlignCenter},
-					declarative.Composite{
-						Layout: declarative.HBox{},
-						Children: []declarative.Widget{
-							declarative.HSpacer{},
-							declarative.PushButton{Text: "安装", AssignTo: &installBtn, OnClicked: func() {
-								dir := pathEdit.Text()
-								if strings.TrimSpace(dir) == "" {
-									dir = defaultDir()
-								}
-								installBtn.SetEnabled(false)
-								status.SetText("正在安装…")
-								go func() {
-									err := install(dir, cbStart.Checked(), cbDesktop.Checked())
-									mw.Synchronize(func() {
-										if err != nil {
-											status.SetText("安装失败：" + err.Error())
-											installBtn.SetEnabled(true)
-											return
-										}
-										// Switch to the completion screen.
-										doneLabel.SetText("安装成功！\n已安装到：" + dir)
-										installPanel.SetVisible(false)
-										donePanel.SetVisible(true)
-										mw.SetTitle("星匣 STARBOX · 安装完成")
-									})
-								}()
-							}},
-							declarative.PushButton{Text: "取消", OnClicked: func() { mw.Close() }},
-						},
-					},
-				},
-			},
-			// Step 2: completion + launch now
-			declarative.Composite{
-				AssignTo: &donePanel,
-				Layout:   declarative.VBox{},
-				Visible:  false,
-				Children: []declarative.Widget{
-					declarative.Label{Text: "✔ 安装完成", Font: declarative.Font{PointSize: 20, Bold: true}, TextAlignment: declarative.AlignCenter},
-					declarative.VSpacer{},
-					declarative.Label{AssignTo: &doneLabel, TextAlignment: declarative.AlignCenter, Text: "安装成功！\n已安装到：" + defaultDir()},
-					declarative.Label{Text: "可从开始菜单 / 桌面快捷方式启动，或点击下方按钮立即运行。", TextAlignment: declarative.AlignCenter},
-					declarative.VSpacer{},
-					declarative.Composite{
-						Layout: declarative.HBox{},
-						Children: []declarative.Widget{
-							declarative.HSpacer{},
-							declarative.PushButton{Text: "🚀 立即运行", MinSize: declarative.Size{Width: 150, Height: 0}, OnClicked: func() {
-								dir := pathEdit.Text()
-								if strings.TrimSpace(dir) == "" {
-									dir = defaultDir()
-								}
-								exePath := filepath.Join(dir, "starbox.exe")
-								if _, err := os.Stat(exePath); err == nil {
-									_ = exec.Command(exePath, "-desktop").Start()
-								}
-								mw.Close()
-							}},
-							declarative.PushButton{Text: "完成", OnClicked: func() { mw.Close() }},
-						},
-					},
-				},
-			},
+	url := fmt.Sprintf("http://127.0.0.1:%d/?mode=%s", port, mode)
+	dataPath := filepath.Join(os.TempDir(), "starbox_installer_"+mode)
+
+	wv := webview2.NewWithOptions(webview2.WebViewOptions{
+		Debug:     false,
+		AutoFocus: true,
+		DataPath:  dataPath,
+		WindowOptions: webview2.WindowOptions{
+			Title:  "星匣 STARBOX 安装器",
+			Width:  620,
+			Height: 560,
+			IconId: 1, // app icon resource (rsrc)
+			Center: true,
 		},
+	})
+	if wv == nil {
+		// WebView2 runtime missing — fall back to a plain message.
+		msgBox("无法加载 WebView2 运行时。请先安装 Microsoft Edge WebView2 Runtime 后重试。\n\n或直接从源码构建后手动安装。", "STARBOX 安装器")
+		return
 	}
-	if err := mw2.Create(); err != nil {
-		log.Fatalf("create window: %v", err)
+	defer wv.Destroy()
+	if err := wv.Bind("pickFolder", pickFolder); err != nil {
+		log.Printf("bind pickFolder: %v", err)
 	}
-	mw.Run()
+	wv.SetTitle("星匣 STARBOX 安装器")
+	wv.SetSize(620, 560, webview2.HintNone)
+	wv.Navigate(url)
+	wv.Run()
 }

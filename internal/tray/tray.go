@@ -22,12 +22,15 @@ func onReady() {
 	systray.SetTitle("STARBOX")
 	systray.SetTooltip("STARBOX · 你的次元，收于一匣")
 
-	mOpen := systray.AddMenuItem("打开面板", "打开仪表盘窗口")
-	mRefresh := systray.AddMenuItem("刷新面板", "重新打开仪表盘窗口")
-	mQuit := systray.AddMenuItem("退出", "退出 STARBOX")
+	// Left-click (and right-click) should show the menu, so the tray icon is
+	// responsive after the window is hidden to the tray.
+	systray.SetOnClick(func(menu systray.IMenu) { _ = menu.ShowMenu() })
+	systray.SetOnRClick(func(menu systray.IMenu) { _ = menu.ShowMenu() })
+
+	mOpen := systray.AddMenuItem("打开应用", "打开 STARBOX 主界面")
+	mQuit := systray.AddMenuItem("关闭应用", "退出 STARBOX")
 
 	mOpen.Click(spawnWindow)
-	mRefresh.Click(spawnWindow)
 	mQuit.Click(func() {
 		systray.Quit()
 		os.Exit(0)
