@@ -123,6 +123,14 @@
   .series-season-row:last-child{border-bottom:0}
   .series-season-row:hover{background:rgba(34,211,238,.14)}
   .series-season-row .sl{font-weight:700}
+  /* platform bindings (discreet) */
+  .bind-list{display:flex;flex-direction:column;gap:6px}
+  .bind-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--bs-border-color);border-radius:10px;background:var(--bs-tertiary-bg)}
+  .bind-ic{font-size:15px;width:22px;text-align:center;opacity:.85}
+  .bind-name{flex:1;font-weight:600;font-size:13px}
+  .bind-status{font-size:11px;color:var(--bs-secondary-color);white-space:nowrap}
+  .bind-status.on{color:#2ecc71}
+  .bind-btn{padding:2px 10px;font-size:12px}
   /* detail view */
   #p-anime-detail .detail-cover-wrap{width:100%;max-width:300px;margin:0 auto}
   .d-section-title{font-size:11px;letter-spacing:1px;color:var(--bs-secondary-color);text-transform:uppercase;margin-bottom:8px}
@@ -296,14 +304,15 @@
           <div class="card border-0 shadow-sm mt-3"><div class="card-body"><div class="text-secondary text-uppercase mb-2" style="font-size:11px;letter-spacing:1px">📰 我的 CSDN</div><div id="myCsdn"><div class="empty">连接 CSDN 后显示你的博客</div></div></div></div>
         </div>
         <div class="col-lg-4"><div class="card border-0 shadow-sm"><div class="card-body">
-          <div class="text-secondary text-uppercase mb-2" style="font-size:11px;letter-spacing:1px">平台集成</div>
-          <div class="integ" id="platList">
-            <div class="integ-row"><span class="integ-icon">🐙</span><span class="integ-name">GitHub</span><span class="integ-status" id="st-gh"></span><button class="integ-set" data-set="gh">连接</button></div>
-            <div class="integ-row"><span class="integ-icon">📰</span><span class="integ-name">CSDN</span><span class="integ-status" id="st-csdn"></span><button class="integ-set" data-set="csdn">连接</button></div>
-            <div class="integ-row"><span class="integ-icon">🔥</span><span class="integ-name">GitHub 热门</span><span class="integ-status on">已启用</span><button class="integ-set" data-set="trending">配置</button></div>
+          <div class="text-secondary text-uppercase mb-2" style="font-size:11px;letter-spacing:1px">账户绑定</div>
+          <div class="text-secondary mb-3" style="font-size:12px;line-height:1.6">关联你的平台账号，用于个性化内容。凭据仅保存在本机，经授权后使用。</div>
+          <div class="bind-list" id="bindList">
+            <div class="bind-row" data-p="github"><span class="bind-ic">🐙</span><span class="bind-name">GitHub</span><span class="bind-status" data-st="github">未绑定</span><button class="btn btn-sm btn-outline-secondary bind-btn" data-bind="github">绑定</button></div>
+            <div class="bind-row" data-p="csdn"><span class="bind-ic">📰</span><span class="bind-name">CSDN</span><span class="bind-status" data-st="csdn">未绑定</span><button class="btn btn-sm btn-outline-secondary bind-btn" data-bind="csdn">绑定</button></div>
+            <div class="bind-row" data-p="bangumi"><span class="bind-ic">📺</span><span class="bind-name">Bangumi</span><span class="bind-status" data-st="bangumi">未绑定</span><button class="btn btn-sm btn-outline-secondary bind-btn" data-bind="bangumi">绑定</button></div>
+            <div class="bind-row" data-p="anilist"><span class="bind-ic">📼</span><span class="bind-name">AniList</span><span class="bind-status" data-st="anilist">未绑定</span><button class="btn btn-sm btn-outline-secondary bind-btn" data-bind="anilist">绑定</button></div>
           </div>
-          <div id="platForm"></div>
-          <div class="text-secondary mt-3" style="font-size:11px">GitHub 用 Personal Access Token 授权；CSDN 无个人 API，用博客 RSS 关联。内容按你的账号个性化。</div>
+          <div class="text-secondary mt-3" style="font-size:11px;line-height:1.6">凭据仅存本机，绝不上传。GitHub 用 Personal Access Token；CSDN 用账号关联博客；Bangumi / AniList 用账号名做内容个性化。</div>
         </div></div></div>
       </div>
     </section>
@@ -354,6 +363,15 @@
     <button class="btn btn-sm btn-link text-secondary" id="authSkip">先用游客模式</button>
     <button class="btn btn-sm btn-primary" id="authGo">登录</button>
   </div>
+</div></div></div>
+
+<div class="modal fade" id="bindModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered modal-sm"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title" id="bindTitle">绑定</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body">
+    <div id="bindForm"></div>
+    <div class="text-danger" id="bindMsg" style="font-size:12px;min-height:18px"></div>
+  </div>
+  <div class="modal-footer"><button class="btn btn-sm btn-link text-secondary" id="bindCancel">取消</button><button class="btn btn-sm btn-primary" id="bindSave">保存</button></div>
 </div></div></div>
 
 <script src="/assets/bootstrap.js"></script>
@@ -949,24 +967,59 @@ function ruleOpenForm(r){ruleEdit=r||null;const d=r?(r.data||{}):{};const f=$('r
   cancel.onclick=()=>{f.style.display='none';ruleEdit=null;};
 }
 $('ruleAdd').onclick=()=>ruleOpenForm(null);
-let connect={csdn:'',github:'',ghToken:''};
+let connect={csdn:'',github:'',ghToken:'',bgmUser:'',anilistUser:''};
+const BIND_PLATS={
+  github:{label:'GitHub',hint:'用 GitHub Personal Access Token 授权，以个性化热门与内容。',link:'https://github.com/settings/tokens',fields:[
+    {k:'account',label:'GitHub 账号',ph:'你的 GitHub 用户名',get:()=>connect.github,set:v=>{connect.github=v}},
+    {k:'cred',label:'Personal Access Token',type:'password',ph:'ghp_…',get:()=>connect.ghToken,set:v=>{connect.ghToken=v}}],
+    save:async()=>{const r=await fetch('/github/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:connect.ghToken})});if(!r.ok)return '令牌无效或已过期';const a=await r.json();connect.github=a.login;return '';}},
+  csdn:{label:'CSDN',hint:'CSDN 无个人授权 API，用账号关联你的博客。',link:'https://blog.csdn.net',fields:[
+    {k:'account',label:'CSDN 账号',ph:'你的 CSDN 用户名',get:()=>connect.csdn,set:v=>{connect.csdn=v}},
+    {k:'cred',label:'Cookie / 令牌（可选）',type:'password',ph:'留空则仅关联博客',get:()=>'',set:()=>{}}],
+    save:async()=>''},
+  bangumi:{label:'Bangumi',hint:'用 Bangumi 账号拉取你的收藏清单，做番剧个性化。',link:'https://bgm.tv',fields:[
+    {k:'account',label:'Bangumi 用户名 / UID',ph:'例如 starryuri',get:()=>connect.bgmUser,set:v=>{connect.bgmUser=v}}],
+    save:async()=>''},
+  anilist:{label:'AniList',hint:'用 AniList 账号同步看番数据。',link:'https://anilist.co',fields:[
+    {k:'account',label:'AniList 用户名',ph:'你的 AniList 账号',get:()=>connect.anilistUser,set:v=>{connect.anilistUser=v}}],
+    save:async()=>''}
+};
+let curBindPlat=null;
+function bindVal(p,k){const f=(BIND_PLATS[p].fields||[]).find(x=>x.k===k);return f?(f.get()||''):'';}
+function openBind(p){
+  curBindPlat=p; const cfg=BIND_PLATS[p]; if(!cfg)return;
+  $('bindTitle').textContent='绑定 · '+cfg.label; $('bindMsg').textContent='';
+  let h='<div class="text-secondary mb-2" style="font-size:12px;line-height:1.6">'+esc(cfg.hint)+'</div>';
+  h+='<div class="mb-2" style="font-size:11px"><a href="'+esc(cfg.link||'#')+'" target="_blank" rel="noopener">前往平台获取 →</a></div>';
+  (cfg.fields||[]).forEach(f=>{const t=(f.type==='password')?'password':'text';
+    h+='<div class="mb-2"><label class="form-label form-label-sm text-secondary">'+esc(f.label)+'</label><input class="form-control form-control-sm" id="bind_'+f.k+'" type="'+t+'" value="'+esc(bindVal(p,f.k))+'" placeholder="'+esc(f.ph||'')+'">'+(f.type==='password'?'<div class="form-check form-switch mt-1"><input class="form-check-input" type="checkbox" onclick="toggleBindPass()" id="bindShow"><label class="form-check-label" for="bindShow" style="font-size:11px">显示</label></div>':'')+'</div>';});
+  $('bindForm').innerHTML=h;
+  bootstrap.Modal.getOrCreateInstance($('bindModal')).show();
+}
+function toggleBindPass(){const i=$('bind_cred');if(i)i.type=(i.type==='password')?'text':'password';}
+async function bindSave(){
+  const cfg=BIND_PLATS[curBindPlat]; if(!cfg)return;
+  const msg=$('bindMsg'); if(msg)msg.textContent='';
+  (cfg.fields||[]).forEach(f=>{const el=document.getElementById('bind_'+f.k);if(el)f.set(el.value.trim());});
+  const accNeed=(cfg.fields||[]).find(f=>f.k==='account');
+  if(accNeed && !(accNeed.get()||'')){if(msg)msg.textContent='请输入'+accNeed.label;return;}
+  if(curBindPlat==='github' && !connect.ghToken){if(msg)msg.textContent='请输入 Personal Access Token';return;}
+  try{const err=await cfg.save();if(err){if(msg)msg.textContent=err;return;}await saveConnect();const mi=bootstrap.Modal.getInstance($('bindModal'));if(mi)mi.hide();insightLoad();}
+  catch(e){if(msg)msg.textContent='保存失败';}
+}
 function repoCard(r){const a=document.createElement('a');a.href=r.url;a.target='_blank';a.rel='noopener';a.className='kb-row text-decoration-none';a.innerHTML='<div class="kb-head"><span class="kb-title">'+esc(r.name)+'</span><span class="badge text-bg-success">★ '+r.stars+'</span>'+(r.lang?'<span class="badge text-bg-secondary">'+esc(r.lang)+'</span>':'')+'</div>'+(r.desc?'<div class="kb-note">'+esc(r.desc)+'</div>':'');return a;}
 async function saveConnect(){const list=await (await fetch('/kb/connect')).json();const body=JSON.stringify(connect);if(list.length){await fetch('/kb/connect/'+list[0].id,{method:'PUT',headers:{'Content-Type':'application/json'},body});}else{await fetch('/kb/connect',{method:'POST',headers:{'Content-Type':'application/json'},body});}}
 async function insightLoad(){
   try{const con=await (await fetch('/kb/connect')).json();connect=(con[0]||{}).data||{csdn:'',github:'',ghToken:''};}catch(e){}
-  const sgh=document.getElementById('st-gh');if(sgh){sgh.textContent=connect.ghToken?(connect.github||'已连接'):'未连接';sgh.classList.toggle('on',!!connect.ghToken);}
-  const scs=document.getElementById('st-csdn');if(scs){scs.textContent=connect.csdn?'已连接':'未连接';scs.classList.toggle('on',!!connect.csdn);}
+  const stMap={github:connect.ghToken,csdn:connect.csdn,bangumi:connect.bgmUser,anilist:connect.anilistUser};
+  Object.keys(stMap).forEach(k=>{const el=document.querySelector('[data-st="'+k+'"]');if(el){const v=stMap[k];el.textContent=v?((k==='github')?(connect.github||'已绑定'):('已绑定 · '+v)):'未绑定';el.classList.toggle('on',!!v);const btn=el.nextElementSibling;if(btn)btn.textContent=v?'管理':'绑定';}});
   const tl=$('trendList'); if(tl){tl.innerHTML='<div class="empty">加载中…</div>';try{const qs=(connect.ghToken?('?token='+encodeURIComponent(connect.ghToken)):'');const repos=await (await fetch('/github/trending'+qs)).json();tl.innerHTML='';if(!repos.length){tl.innerHTML='<div class="empty">暂无数据</div>';}else{repos.forEach(r=>tl.appendChild(repoCard(r)));}}catch(e){tl.innerHTML='<div class="empty">加载失败</div>';}}
   const mc=$('myCsdn');if(mc){if(connect.csdn){mc.innerHTML='<div class="empty">加载中…</div>';try{const d=await (await fetch('/csdn/blog?user='+encodeURIComponent(connect.csdn))).json();mc.innerHTML='';const its=d.items||[];if(!its.length){mc.innerHTML='<div class="empty">暂无文章</div>';}else{its.forEach(it=>{const a=document.createElement('a');a.href=it.link||'#';a.target='_blank';a.rel='noopener';a.className='kb-row text-decoration-none';a.innerHTML='<div class="kb-title">'+esc(it.title)+'</div>';mc.appendChild(a);});}}catch(e){mc.innerHTML='<a class="kb-row text-decoration-none" href="https://blog.csdn.net/'+encodeURIComponent(connect.csdn)+'" target="_blank" rel="noopener"><div class="kb-title">打开我的 CSDN 主页 · 星空之忆</div><div class="text-secondary" style="font-size:12px">该博客目前未开放 RSS，暂无法自动拉取文章，可点击进入主页。</div></a>';}}else{mc.innerHTML='<div class="empty">连接 CSDN 后显示你的博客</div>';}}
 }
 $('trendRefresh').onclick=insightLoad;
-document.querySelectorAll('.integ-set').forEach(b=>{b.onclick=()=>{const p=b.dataset.set;const f=$('platForm');f.style.display='block';
-  if(p==='gh'){f.innerHTML='<div class="text-secondary" style="font-size:12px">GitHub Personal Access Token（Settings → Developer settings → Personal access tokens 生成，勾选 repo）</div><div class="pr"><input class="form-control form-control-sm" id="platInput" type="password" placeholder="ghp_…"><button class="btn btn-sm btn-outline-secondary" id="platSave">连接并验证</button><button class="btn btn-sm btn-link text-secondary" id="platCancel">取消</button></div><div id="platMsg" class="text-danger mt-1" style="font-size:12px"></div>';
-    $('platSave').onclick=async()=>{const tk=$('platInput').value.trim();if(!tk)return;try{const r=await fetch('/github/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tk})});if(!r.ok){document.getElementById('platMsg').textContent='验证失败：令牌无效';return;}const acct=await r.json();connect.github=acct.login;connect.ghToken=tk;await saveConnect();f.style.display='none';insightLoad();}catch(e){document.getElementById('platMsg').textContent='验证失败';}};}
-  else if(p==='csdn'){f.innerHTML='<div class="text-secondary" style="font-size:12px">CSDN 用户名（CSDN 无个人授权 API，用博客 RSS 关联）</div><div class="pr"><input class="form-control form-control-sm" id="platInput" value="'+esc(connect.csdn||'')+'" placeholder="用户名"><button class="btn btn-sm btn-outline-secondary" id="platSave">连接</button><button class="btn btn-sm btn-link text-secondary" id="platCancel">取消</button></div>';
-    $('platSave').onclick=async()=>{const v=$('platInput').value.trim();if(!v)return;connect.csdn=v;await saveConnect();f.style.display='none';insightLoad();};}
-  else{f.innerHTML='<div class="text-secondary" style="font-size:12px">GitHub 热门已按近 7 天自动拉取</div><div class="pr"><button class="btn btn-sm btn-outline-secondary" id="platSave">知道了</button></div>';$('platSave').onclick=()=>{f.style.display='none';};}
-  $('platCancel').onclick=()=>{f.style.display='none';};};});
+document.querySelectorAll('.bind-btn').forEach(b=>{b.onclick=()=>openBind(b.dataset.bind);});
+$('bindSave').onclick=bindSave;
+$('bindCancel').onclick=()=>{const mi=bootstrap.Modal.getInstance($('bindModal'));if(mi)mi.hide();};
 $('themeBtn').onclick=()=>{const cur=document.documentElement.getAttribute('data-bs-theme');setThemeTo(cur==='light'?'dark':'light');};
 $('authGo').onclick=authSubmit;
 $('authPass').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();authSubmit();}});
