@@ -28,6 +28,7 @@ import (
 
 	"butler/internal/account"
 	"butler/internal/config"
+	"butler/internal/githot"
 	"butler/internal/kb"
 	"butler/internal/monitor"
 	"butler/internal/sched"
@@ -65,6 +66,15 @@ type App struct {
 
 	favList   []kb.Record
 	favLoaded bool
+
+	insRepos []githot.Repo
+	insLoaded bool
+	insRefresh, bindSave *widget.Clickable
+	bindRows   map[string]*widget.Clickable
+	bindSel    string
+	bindData map[string]interface{}
+	bindAcc, bindPass *widget.Editor
+	insMsg  string
 
 	kbTab    string
 	kbTabs   map[string]*widget.Clickable
@@ -115,12 +125,21 @@ func newApp(dataDir string) *App {
 		loginBtn: &widget.Clickable{}, regBtn: &widget.Clickable{}, logoutBtn: &widget.Clickable{},
 		accountBtn: &widget.Clickable{}, kbAdd: &widget.Clickable{},
 		notifAllRead: &widget.Clickable{}, notifClear: &widget.Clickable{},
+		insRefresh: &widget.Clickable{}, bindSave: &widget.Clickable{},
+		bindRows: map[string]*widget.Clickable{},
+		bindSel:  "github",
+		bindData: map[string]interface{}{},
+		bindAcc:  &widget.Editor{SingleLine: true},
+		bindPass: &widget.Editor{SingleLine: true},
 	}
 	for _, p := range pages {
 		a.nav[p] = &widget.Clickable{}
 	}
 	for _, t := range []string{"anime", "books", "study", "games", "notes"} {
 		a.kbTabs[t] = &widget.Clickable{}
+	}
+	for _, t := range []string{"github", "csdn", "bangumi", "anilist"} {
+		a.bindRows[t] = &widget.Clickable{}
 	}
 	if a.set.AutoStart {
 		_ = settings.SetAutoStart(true, exe)
@@ -281,6 +300,8 @@ func (a *App) renderPage(gtx layout.Context, th *material.Theme, p string) layou
 		return a.renderRSS(gtx, th)
 	case "favs":
 		return a.renderFavs(gtx, th)
+	case "insight":
+		return a.renderInsight(gtx, th)
 	default:
 		return material.Caption(th, "模块「"+p+"」正在迁移到原生界面……").Layout(gtx)
 	}
@@ -672,6 +693,125 @@ func (a *App) renderFavs(gtx layout.Context, th *material.Theme) layout.Dimensio
 				}
 				return material.Body1(th, "·  ["+label+"]  "+name).Layout(gtx)
 			})
+		}),
+	)
+}
+
+var bindLabels = map[string]string{"github": "GitHub", "csdn": "CSDN", "bangumi": "Bangumi", "anilist": "AniList"}
+var bindAccKey = map[string]string{"github": "github", "csdn": "csdn", "bangumi": "bgmUser", "anilist": "anilistUser"}
+
+func (a *App) loadInsight() {
+	repos, err := githot.Trending(7, "")
+	if err == nil {
+		a.insRepos = repos
+	}
+	list, _ := a.store().List("connect")
+	if len(list) > 0 {
+		a.bindData = list[0].Data
+	} else {
+		a.bindData = map[string]interface{}{}
+	}
+	a.refillBindEditors()
+	a.insLoaded = true
+}
+
+func (a *App) refillBindEditors() {
+	acc, _ := a.bindData[bindAccKey[a.bindSel]].(string)
+	pass, _ := a.bindData[a.bindSel+"_pass"].(string)
+	a.bindAcc.SetText(acc)
+	a.bindPass.SetText(pass)
+}
+
+func (a *App) renderInsight(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	if !a.insLoaded {
+		a.loadInsight()
+	}
+	keys := []string{"github", "csdn", "bangumi", "anilist"}
+	row := make([]layout.FlexChild, 0, len(keys))
+	for _, k := range keys {
+		k := k
+		row = append(row, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			clicked, d := a.btnClick(th, gtx, a.bindRows[k], bindLabels[k])
+			if clicked {
+				a.bindSel = k
+				a.refillBindEditors()
+			}
+			return d
+		}))
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H5(th, "情报").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.H6(th, "🔥 GitHub 热门").Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					clicked, d := a.btnClick(th, gtx, a.insRefresh, "刷新")
+					if clicked {
+						if repos, err := githot.Trending(7, ""); err == nil {
+							a.insRepos = repos
+						}
+					}
+					return d
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return (&layout.List{}).Layout(gtx, len(a.insRepos), func(gtx layout.Context, i int) layout.Dimensions {
+				r := a.insRepos[i]
+				line := "·  " + r.Name + "   ★" + strconv.Itoa(r.Stars)
+				if r.Desc != "" {
+					line += "   " + r.Desc
+				}
+				return material.Body1(th, line).Layout(gtx)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H6(th, "账户绑定 · 凭据仅存本机").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, row...)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.Editor(th, a.bindAcc, "账号 / 用户名").Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.Editor(th, a.bindPass, "密码 / 令牌（可选）").Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					clicked, d := a.btnClick(th, gtx, a.bindSave, "保存")
+					if clicked {
+						a.bindData[bindAccKey[a.bindSel]] = a.bindAcc.Text()
+						a.bindData[a.bindSel+"_pass"] = a.bindPass.Text()
+						list, _ := a.store().List("connect")
+						if len(list) > 0 {
+							_, _ = a.store().Update("connect", list[0].ID, a.bindData)
+						} else {
+							_, _ = a.store().Add("connect", a.bindData)
+						}
+						a.insMsg = "已保存"
+					}
+					return d
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.Caption(th, "前往对应平台获取后填入，用于个性化内容。"+a.insMsg).Layout(gtx)
+				}),
+			)
 		}),
 	)
 }
