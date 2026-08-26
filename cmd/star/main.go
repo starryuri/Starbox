@@ -63,6 +63,9 @@ type App struct {
 	notifLoaded bool
 	notifAllRead, notifClear *widget.Clickable
 
+	favList   []kb.Record
+	favLoaded bool
+
 	kbTab    string
 	kbTabs   map[string]*widget.Clickable
 	addTitle *widget.Editor
@@ -276,6 +279,8 @@ func (a *App) renderPage(gtx layout.Context, th *material.Theme, p string) layou
 		return a.renderNotif(gtx, th)
 	case "rss":
 		return a.renderRSS(gtx, th)
+	case "favs":
+		return a.renderFavs(gtx, th)
 	default:
 		return material.Caption(th, "模块「"+p+"」正在迁移到原生界面……").Layout(gtx)
 	}
@@ -638,6 +643,34 @@ func (a *App) renderRSS(gtx layout.Context, th *material.Theme) layout.Dimension
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return (&layout.List{}).Layout(gtx, len(es), func(gtx layout.Context, i int) layout.Dimensions {
 				return material.Body1(th, "·  "+es[i].title).Layout(gtx)
+			})
+		}),
+	)
+}
+
+func (a *App) renderFavs(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	if !a.favLoaded {
+		a.favList, _ = a.store().List("favs")
+		a.favLoaded = true
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H5(th, "收藏").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if len(a.favList) == 0 {
+				return material.Caption(th, "暂无收藏的声优 / 制作公司").Layout(gtx)
+			}
+			return (&layout.List{}).Layout(gtx, len(a.favList), func(gtx layout.Context, i int) layout.Dimensions {
+				r := a.favList[i]
+				typ, _ := r.Data["type"].(string)
+				name, _ := r.Data["name"].(string)
+				label := "声优"
+				if typ == "studio" {
+					label = "制作公司"
+				}
+				return material.Body1(th, "·  ["+label+"]  "+name).Layout(gtx)
 			})
 		}),
 	)
