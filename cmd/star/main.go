@@ -106,6 +106,10 @@ type App struct {
 	diskBack   *widget.Clickable
 	diskLoaded bool
 
+	// persistent scrollable lists (reused across frames; avoids per-frame recreate)
+	drivesL, diskL, kbL, studiosL, charsL layout.List
+	notifL, rssL, favsL, repoL, ruleL     layout.List
+
 	kbTab     string
 	kbTabs    map[string]*widget.Clickable
 	addTitle  *widget.Editor
@@ -210,6 +214,16 @@ func newApp(dataDir string) *App {
 		_ = settings.SetAutoStart(true, exe)
 	}
 	a.autostart.Value = a.set.AutoStart
+	a.drivesL.Axis = layout.Vertical
+	a.diskL.Axis = layout.Vertical
+	a.kbL.Axis = layout.Vertical
+	a.studiosL.Axis = layout.Vertical
+	a.charsL.Axis = layout.Vertical
+	a.notifL.Axis = layout.Vertical
+	a.rssL.Axis = layout.Vertical
+	a.favsL.Axis = layout.Vertical
+	a.repoL.Axis = layout.Vertical
+	a.ruleL.Axis = layout.Vertical
 	return a
 }
 
@@ -359,15 +373,20 @@ func (a *App) renderSidebar(gtx layout.Context, th *material.Theme) layout.Dimen
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(pages), func(gtx layout.Context, i int) layout.Dimensions {
-					p := pages[i]
-					c := a.nav[p]
-					d := a.navRow(gtx, th, c, pageLabels[p], a.page == p, 15)
-					if c.Clicked(gtx) {
-						a.page = p
-					}
-					return d
-				})
+				// non-scrolling nav (no scroll gesture competing with clicks)
+				children := make([]layout.FlexChild, 0, len(pages))
+				for _, p := range pages {
+					p := p
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						c := a.nav[p]
+						d := a.navRow(gtx, th, c, pageLabels[p], a.page == p, 15)
+						if c.Clicked(gtx) {
+							a.page = p
+						}
+						return d
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
@@ -462,7 +481,7 @@ func (a *App) renderOverview(gtx layout.Context, th *material.Theme) layout.Dime
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(a.drives), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.drivesL).Layout(gtx, len(a.drives), func(gtx layout.Context, i int) layout.Dimensions {
 				d := a.drives[i]
 				return material.Body2(th, d.name+"  "+strconv.FormatFloat(d.usedPct, 'f', 1, 64)+"%  "+humanBytes(d.used)+" / "+humanBytes(d.total)).Layout(gtx)
 			})
@@ -566,7 +585,7 @@ func (a *App) renderDisk(gtx layout.Context, th *material.Theme) layout.Dimensio
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(a.diskItems), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.diskL).Layout(gtx, len(a.diskItems), func(gtx layout.Context, i int) layout.Dimensions {
 				item := a.diskItems[i]
 				c := a.diskBtns[i]
 				clicked, d := a.btnClick(th, gtx, c, item.Name+"   "+humanBytes(uint64(item.Size)))
@@ -746,7 +765,7 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 			if len(a.kbEnts) == 0 {
 				return material.Caption(th, "暂无条目").Layout(gtx)
 			}
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(a.kbEnts), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.kbL).Layout(gtx, len(a.kbEnts), func(gtx layout.Context, i int) layout.Dimensions {
 				r := a.kbEnts[i]
 				title, _ := r.Data["title"].(string)
 				sec, _ := r.Data[kbSecField[a.kbTab]].(string)
@@ -973,7 +992,7 @@ func (a *App) renderAnimeDetail(gtx layout.Context, th *material.Theme) layout.D
 			if len(studios) == 0 {
 				return material.Caption(th, "加载中…").Layout(gtx)
 			}
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(studios), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.studiosL).Layout(gtx, len(studios), func(gtx layout.Context, i int) layout.Dimensions {
 				return material.Body1(th, "·  "+studios[i]).Layout(gtx)
 			})
 		}),
@@ -990,7 +1009,7 @@ func (a *App) renderAnimeDetail(gtx layout.Context, th *material.Theme) layout.D
 				}
 				return material.Caption(th, "暂无数据").Layout(gtx)
 			}
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(a.detailChars), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.charsL).Layout(gtx, len(a.detailChars), func(gtx layout.Context, i int) layout.Dimensions {
 				c := a.detailChars[i]
 				line := "·  " + c.Name
 				if len(c.Actors) > 0 {
@@ -1108,7 +1127,7 @@ func (a *App) renderNotif(gtx layout.Context, th *material.Theme) layout.Dimensi
 			if len(a.notifList) == 0 {
 				return material.Caption(th, "暂无通知").Layout(gtx)
 			}
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(a.notifList), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.notifL).Layout(gtx, len(a.notifList), func(gtx layout.Context, i int) layout.Dimensions {
 				r := a.notifList[i]
 				title, _ := r.Data["title"].(string)
 				body, _ := r.Data["body"].(string)
@@ -1155,7 +1174,7 @@ func (a *App) renderRSS(gtx layout.Context, th *material.Theme) layout.Dimension
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(es), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.rssL).Layout(gtx, len(es), func(gtx layout.Context, i int) layout.Dimensions {
 				return material.Body1(th, "·  "+es[i].title).Layout(gtx)
 			})
 		}),
@@ -1176,7 +1195,7 @@ func (a *App) renderFavs(gtx layout.Context, th *material.Theme) layout.Dimensio
 			if len(a.favList) == 0 {
 				return material.Caption(th, "暂无收藏的声优 / 制作公司").Layout(gtx)
 			}
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(a.favList), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.favsL).Layout(gtx, len(a.favList), func(gtx layout.Context, i int) layout.Dimensions {
 				r := a.favList[i]
 				typ, _ := r.Data["type"].(string)
 				name, _ := r.Data["name"].(string)
@@ -1257,7 +1276,7 @@ func (a *App) renderInsight(gtx layout.Context, th *material.Theme) layout.Dimen
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(a.insRepos), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.repoL).Layout(gtx, len(a.insRepos), func(gtx layout.Context, i int) layout.Dimensions {
 				r := a.insRepos[i]
 				line := "·  " + r.Name + "   ★" + strconv.Itoa(r.Stars)
 				if r.Desc != "" {
@@ -1359,7 +1378,7 @@ func (a *App) renderRules(gtx layout.Context, th *material.Theme) layout.Dimensi
 			if len(a.ruleList) == 0 {
 				return material.Caption(th, "暂无规则").Layout(gtx)
 			}
-			return (&layout.List{Axis: layout.Vertical}).Layout(gtx, len(a.ruleList), func(gtx layout.Context, i int) layout.Dimensions {
+			return (&a.ruleL).Layout(gtx, len(a.ruleList), func(gtx layout.Context, i int) layout.Dimensions {
 				r := a.ruleList[i]
 				name, _ := r.Data["name"].(string)
 				cond, _ := r.Data["cond"].(string)
