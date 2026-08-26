@@ -76,6 +76,11 @@ type App struct {
 	bindAcc, bindPass *widget.Editor
 	insMsg  string
 
+	ruleList   []kb.Record
+	ruleLoaded bool
+	ruleName, ruleCond, ruleParam, ruleAction *widget.Editor
+	ruleAdd *widget.Clickable
+
 	kbTab    string
 	kbTabs   map[string]*widget.Clickable
 	addTitle *widget.Editor
@@ -131,6 +136,9 @@ func newApp(dataDir string) *App {
 		bindData: map[string]interface{}{},
 		bindAcc:  &widget.Editor{SingleLine: true},
 		bindPass: &widget.Editor{SingleLine: true},
+		ruleName: &widget.Editor{SingleLine: true}, ruleCond: &widget.Editor{SingleLine: true},
+		ruleParam: &widget.Editor{SingleLine: true}, ruleAction: &widget.Editor{SingleLine: true},
+		ruleAdd: &widget.Clickable{},
 	}
 	for _, p := range pages {
 		a.nav[p] = &widget.Clickable{}
@@ -302,6 +310,8 @@ func (a *App) renderPage(gtx layout.Context, th *material.Theme, p string) layou
 		return a.renderFavs(gtx, th)
 	case "insight":
 		return a.renderInsight(gtx, th)
+	case "rules":
+		return a.renderRules(gtx, th)
 	default:
 		return material.Caption(th, "模块「"+p+"」正在迁移到原生界面……").Layout(gtx)
 	}
@@ -812,6 +822,78 @@ func (a *App) renderInsight(gtx layout.Context, th *material.Theme) layout.Dimen
 					return material.Caption(th, "前往对应平台获取后填入，用于个性化内容。"+a.insMsg).Layout(gtx)
 				}),
 			)
+		}),
+	)
+}
+
+func (a *App) renderRules(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	if !a.ruleLoaded {
+		a.ruleList, _ = a.store().List("rules")
+		a.ruleLoaded = true
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H5(th, "规则引擎").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Editor(th, a.ruleName, "名称").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Editor(th, a.ruleCond, "条件，如 cpu_high / disk_high / rss_keyword").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Editor(th, a.ruleParam, "参数，如 90").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Editor(th, a.ruleAction, "动作，如 notify / add_note").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			clicked, d := a.btnClick(th, gtx, a.ruleAdd, "＋ 新建规则")
+			if clicked {
+				name := strings.TrimSpace(a.ruleName.Text())
+				if name != "" {
+					_, _ = a.store().Add("rules", map[string]any{
+						"name": name, "cond": strings.TrimSpace(a.ruleCond.Text()),
+						"param": strings.TrimSpace(a.ruleParam.Text()), "action": strings.TrimSpace(a.ruleAction.Text()),
+						"enabled": true, "cooldown": 900, "title": name,
+					})
+					a.ruleList, _ = a.store().List("rules")
+					a.ruleName.SetText("")
+					a.ruleCond.SetText("")
+					a.ruleParam.SetText("")
+					a.ruleAction.SetText("")
+				}
+			}
+			return d
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if len(a.ruleList) == 0 {
+				return material.Caption(th, "暂无规则").Layout(gtx)
+			}
+			return (&layout.List{}).Layout(gtx, len(a.ruleList), func(gtx layout.Context, i int) layout.Dimensions {
+				r := a.ruleList[i]
+				name, _ := r.Data["name"].(string)
+				cond, _ := r.Data["cond"].(string)
+				param, _ := r.Data["param"].(string)
+				en, _ := r.Data["enabled"].(bool)
+				line := "•  " + name + "   [" + cond
+				if param != "" {
+					line += " " + param
+				}
+				line += "]"
+				if en {
+					line += "  启用"
+				} else {
+					line += "  停用"
+				}
+				return material.Body1(th, line).Layout(gtx)
+			})
 		}),
 	)
 }
