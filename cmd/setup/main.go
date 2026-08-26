@@ -1,22 +1,17 @@
 //go:build windows
 
-// Starbox setup — a native Windows GUI installer built on WebView2.
+// Starbox setup — a native Windows GUI installer (no WebView2, no console).
 //
-//	setup.exe   -> GUI install (pick dir / start menu / desktop)
+//	setup.exe -> native Win32 wizard: pick install dir / start menu / desktop,
+//	            install payload, then a Done screen with "run now" and "finish".
 //
-// The uninstaller is a separate, standalone binary (unins.exe) built from
-// cmd/unin, deployed by this installer and invoked by the Control Panel / the
-// start-menu "卸载 STARBOX" shortcut. Keeping them as two distinct programs
-// avoids the installer ever acting as an uninstaller.
+// The uninstaller is a separate, standalone binary (unins.exe, cmd/unin) and is
+// deployed by this installer, then invoked from Control Panel / Start Menu.
 package main
 
 import (
 	_ "embed"
-	"encoding/json"
 	"fmt"
-	"log"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +19,6 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/jchv/go-webview2"
 	"golang.org/x/sys/windows"
 )
 
@@ -40,14 +34,112 @@ var payloadCfg []byte
 //go:embed payload/unins.exe
 var uninsExe []byte
 
-//go:embed installer.html
-var installerHTML string
-
 const (
 	runKey         = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 	uninstallKey   = `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\STARBOX`
 	createNoWindow = 0x08000000
 )
+
+// ---- Win32 constants ----
+const (
+	wsOverlappedWindow = 0x00CF0000
+	wsChild            = 0x40000000
+	wsVisible          = 0x10000000
+	wsTabStop          = 0x00010000
+	wsGroup            = 0x00020000
+	ssLeft             = 0x00000000
+	bsPushButton       = 0x00000000
+	bsCheckBox         = 0x00000002
+	bsAutoCheckBox     = 0x00000003
+	esAutoHScroll      = 0x00000080
+	esLeft             = 0x00000000
+	esPassword         = 0x0020
+	colorWindow        = 5
+)
+
+// Control IDs.
+const (
+	IDDirEdit   = 100
+	IDBrowse    = 101
+	IDSMCheck   = 102
+	IDDesktopCh = 103
+	IDInstall   = 104
+	IDRun       = 105
+	IDDone      = 106
+	IDStatus    = 107
+	IDMsgStatic = 108
+)
+
+var (
+	user32   = windows.NewLazySystemDLL("user32.dll")
+	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
+	gdi32    = windows.NewLazySystemDLL("gdi32.dll")
+
+	pCreateWindowEx   = user32.NewProc("CreateWindowExW")
+	pDefWindowProc    = user32.NewProc("DefWindowProcW")
+	pDestroyWindow    = user32.NewProc("DestroyWindow")
+	pRegisterClassEx  = user32.NewProc("RegisterClassExW")
+	pCreateFont       = gdi32.NewProc("CreateFontW")
+	pSendMessage      = user32.NewProc("SendMessageW")
+	pSetWindowText    = user32.NewProc("SetWindowTextW")
+	pSetWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
+	pGetWindowLongPtr = user32.NewProc("GetWindowLongPtrW")
+	pShowWindow       = user32.NewProc("ShowWindow")
+	pUpdateWindow     = user32.NewProc("UpdateWindow")
+	pInvalidateRect   = user32.NewProc("InvalidateRect")
+	pDeleteObject     = gdi32.NewProc("DeleteObject")
+	shell32           = windows.NewLazyDLL("shell32.dll")
+	pBrowse           = shell32.NewProc("SHBrowseForFolderW")
+	pPath             = shell32.NewProc("SHGetPathFromIDListW")
+	ole32             = windows.NewLazyDLL("ole32.dll")
+	pCoTaskMemFree    = ole32.NewProc("CoTaskMemFree")
+)
+
+type wndClassEx struct {
+	Size        uint32
+	Style       uint32
+	WndProc     uintptr
+	ClsExtra    int32
+	WndExtra    int32
+	HInstance   uintptr
+	HIcon       uintptr
+	HCursor     uintptr
+	HbrBackground uintptr
+	MenuName    *uint16
+	ClassName   *uint16
+	HIconSm     uintptr
+}
+
+var (
+	hwndMain  uintptr
+	hwndFont  uintptr
+	installed bool
+	// control handles
+	hDirEdit, hBrowseBtn, hSMChk, hDeskChk, hInstallBtn, hRunBtn, hDoneBtn, hStatus, hMsgStatic uintptr
+)
+
+var wndProc = syscall.NewCallback(wndProcMain)
+
+func utf16(s string) *uint16 {
+	p, _ := windows.UTF16PtrFromString(s)
+	return p
+}
+
+func setText(h uintptr, s string) {
+	sp, _ := windows.UTF16PtrFromString(s)
+	pSetWindowText.Call(h, uintptr(unsafe.Pointer(sp)))
+}
+
+func getText(h uintptr) string {
+	buf := make([]uint16, 512)
+	n, _, _ := pSendMessage.Call(h, 0x000D /*WM_GETTEXT*/, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
+	return windows.UTF16ToString(buf[:n])
+}
+
+func checkState(h uintptr) bool {
+	r, _, _ := pSendMessage.Call(h, 0x00F0 /*BM_GETCHECK*/, 0, 0) // BST_CHECKED=1
+	return r == 1
+}
 
 // runNoWindow runs a command without flashing a console window.
 func runNoWindow(name string, args ...string) error {
@@ -108,14 +200,12 @@ func install(dir string, startMenu, desktop bool) error {
 			return err
 		}
 	}
-	// Deploy the standalone uninstaller binary.
 	if err := writeFile(filepath.Join(dir, "unins.exe"), uninsExe); err != nil {
 		return err
 	}
 	if startMenu {
 		sm, _ := shortLinkPaths()
 		shortcut(sm, exePath, "", dir, "STARBOX · 你的次元 · 收于一匣")
-		// Add an uninstall entry in the same start-menu folder.
 		shortcut(filepath.Join(filepath.Dir(sm), "卸载 STARBOX.lnk"), filepath.Join(dir, "unins.exe"), "", dir, "卸载 STARBOX")
 	}
 	if desktop {
@@ -137,24 +227,6 @@ func install(dir string, startMenu, desktop bool) error {
 	return nil
 }
 
-// ---- native helpers ----
-var (
-	shell32 = windows.NewLazyDLL("shell32.dll")
-	bBrowse = shell32.NewProc("SHBrowseForFolderW")
-	bPath   = shell32.NewProc("SHGetPathFromIDListW")
-	ole32   = windows.NewLazyDLL("ole32.dll")
-	bCoFree = ole32.NewProc("CoTaskMemFree")
-	user32  = windows.NewLazyDLL("user32.dll")
-	bMsgBox = user32.NewProc("MessageBoxW")
-)
-
-func msgBox(text, title string) {
-	t, _ := windows.UTF16PtrFromString(title)
-	c, _ := windows.UTF16PtrFromString(text)
-	bMsgBox.Call(0, uintptr(unsafe.Pointer(c)), uintptr(unsafe.Pointer(t)), 0)
-}
-
-// pickFolder shows the native Windows folder picker and returns the chosen path.
 func pickFolder() string {
 	title, _ := windows.UTF16PtrFromString("选择安装位置")
 	bi := struct {
@@ -166,112 +238,223 @@ func pickFolder() string {
 		Lpfn           uintptr
 		LParam         uintptr
 		IImage         int32
-	}{HwndOwner: 0, PidlRoot: 0, PszDisplayName: 0, LpszTitle: title, UlFlags: 0x1 /*BIF_RETURNONLYFSDIRS*/ | 0x40 /*BIF_NEWDIALOGSTYLE*/, Lpfn: 0, LParam: 0, IImage: 0}
-	r, _, _ := bBrowse.Call(uintptr(unsafe.Pointer(&bi)))
+	}{HwndOwner: hwndMain, PidlRoot: 0, PszDisplayName: 0, LpszTitle: title, UlFlags: 0x1 | 0x40, Lpfn: 0, LParam: 0, IImage: 0}
+	r, _, _ := pBrowse.Call(uintptr(unsafe.Pointer(&bi)))
 	if r == 0 {
 		return ""
 	}
-	defer bCoFree.Call(r)
+	defer pCoTaskMemFree.Call(r)
 	var buf [windows.MAX_PATH]uint16
-	if ok, _, _ := bPath.Call(r, uintptr(unsafe.Pointer(&buf[0]))); ok == 0 {
+	if ok, _, _ := pPath.Call(r, uintptr(unsafe.Pointer(&buf[0]))); ok == 0 {
 		return ""
 	}
 	return windows.UTF16ToString(buf[:])
 }
 
-// ---- HTTP API for the WebView2 installer page ----
-func setHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(installerHTML))
-	})
-	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"defaultDir": defaultDir()})
-	})
-	mux.HandleFunc("/install", func(w http.ResponseWriter, r *http.Request) {
-		var b struct {
-			Dir       string `json:"dir"`
-			StartMenu bool   `json:"startMenu"`
-			Desktop   bool   `json:"desktop"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&b)
-		if strings.TrimSpace(b.Dir) == "" {
-			b.Dir = defaultDir()
-		}
-		if err := install(b.Dir, b.StartMenu, b.Desktop); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+func createWin32Font(size int, bold bool) uintptr {
+	const (
+		fwNormal    = 400
+		fwBold      = 700
+		defaultCharset = 1
+		outDefault  = 0
+		clipDefault = 0
+		antialias   = 5
+	)
+	w := uintptr(fwNormal)
+	if bold {
+		w = fwBold
+	}
+	// MS YaHei for CJK; falls back to system default if unavailable.
+	h, _, _ := pCreateFont.Call(uintptr(size), 0, 0, 0, w, 0, 0, 0, defaultCharset, outDefault, clipDefault, antialias, 0, uintptr(unsafe.Pointer(utf16("Microsoft YaHei"))), 0)
+	return h
+}
+
+func createChild(class string, text string, style uint32, id int, x, y, w, h int) uintptr {
+	r, _, _ := pCreateWindowEx.Call(0,
+		uintptr(unsafe.Pointer(utf16(class))),
+		uintptr(unsafe.Pointer(utf16(text))),
+		uintptr(wsChild|wsVisible|style),
+		uintptr(x), uintptr(y), uintptr(w), uintptr(h),
+		hwndMain,
+		uintptr(id),
+		0,
+		0)
+	if id != 0 {
+		// send WM_SETFONT so controls use our CJK-capable font
+		pSendMessage.Call(r, 0x0030 /*WM_SETFONT*/, hwndFont, 1)
+	}
+	return r
+}
+
+func setStatus(text string) {
+	setText(hStatus, text)
+	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
+func enterDoneState() {
+	// Hide install controls, show done controls.
+	pShowWindow.Call(hDirEdit, 0)
+	pShowWindow.Call(hBrowseBtn, 0)
+	pShowWindow.Call(hSMChk, 0)
+	pShowWindow.Call(hDeskChk, 0)
+	pShowWindow.Call(hInstallBtn, 0)
+	pShowWindow.Call(hMsgStatic, 1)
+	pShowWindow.Call(hRunBtn, 1)
+	pShowWindow.Call(hDoneBtn, 1)
+	setText(hMsgStatic, "安装完成！")
+	setStatus(filepath.Dir(getText(hDirEdit)))
+	pUpdateWindow.Call(hwndMain)
+}
+
+func doInstall() {
+	dir := strings.TrimSpace(getText(hDirEdit))
+	if dir == "" {
+		dir = defaultDir()
+		setText(hDirEdit, dir)
+	}
+	setStatus("正在安装…")
+	pShowWindow.Call(hInstallBtn, 0)
+	go func() {
+		err := install(dir, checkState(hSMChk), checkState(hDeskChk))
+		if err != nil {
+			pShowWindow.Call(hInstallBtn, 1)
+			setStatus("安装失败：" + err.Error())
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "dir": b.Dir})
-	})
-	mux.HandleFunc("/launch", func(w http.ResponseWriter, r *http.Request) {
-		var b struct {
-			Dir string `json:"dir"`
+		setStatus("安装完成")
+		enterDoneState()
+	}()
+}
+
+func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintptr {
+	switch msg {
+	case 0x0100: // WM_COMMAND
+		id := uintptr(0xFFFF) & wParam
+		switch id {
+		case IDBrowse:
+			if p := pickFolder(); p != "" {
+				setText(hDirEdit, p)
+			}
+			return 0
+		case IDInstall:
+			doInstall()
+			return 0
+		case IDRun:
+			dir := strings.TrimSpace(getText(hDirEdit))
+			if dir == "" {
+				dir = defaultDir()
+			}
+			exe := filepath.Join(dir, "starbox.exe")
+			if _, err := os.Stat(exe); err == nil {
+				_ = exec.Command(exe, "-desktop").Start()
+			}
+			pDestroyWindow.Call(hwndMain)
+			return 0
+		case IDDone:
+			pDestroyWindow.Call(hwndMain)
+			return 0
 		}
-		_ = json.NewDecoder(r.Body).Decode(&b)
-		dir := b.Dir
-		if strings.TrimSpace(dir) == "" {
-			dir = defaultDir()
+	case 0x0010: // WM_CLOSE
+		pDestroyWindow.Call(hwnd)
+		return 0
+	case 0x0002: // WM_DESTROY
+		if hwndFont != 0 {
+			pDeleteObject.Call(hwndFont)
 		}
-		exe := filepath.Join(dir, "starbox.exe")
-		if _, err := os.Stat(exe); err == nil {
-			_ = exec.Command(exe, "-desktop").Start()
-		}
-		_, _ = w.Write([]byte("ok"))
-	})
+		postQuitMessage()
+		return 0
+	}
+	r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
+	return r
+}
+
+var (
+	pPostQuitMessage = user32.NewProc("PostQuitMessage")
+)
+
+func postQuitMessage() {
+	pPostQuitMessage.Call(0)
+}
+
+type msgStruct struct {
+	hwnd    uintptr
+	message uint32
+	wParam  uintptr
+	lParam  uintptr
+	time    uint32
+	ptX     int32
+	ptY     int32
+}
+
+func curIcon(hInst uintptr) uintptr {
+	r, _, _ := user32.NewProc("LoadIconW").Call(hInst, 1)
+	if r == 0 {
+		r, _, _ = user32.NewProc("LoadIconW").Call(0, 32512)
+	}
+	return r
 }
 
 func main() {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		msgBox("启动安装器失败："+err.Error(), "STARBOX 安装器")
-		return
-	}
-	defer ln.Close()
-	port := ln.Addr().(*net.TCPAddr).Port
+	_, _, _ = user32.NewProc("SetProcessDPIAware").Call()
 
-	mux := http.NewServeMux()
-	setHandlers(mux)
-	go func() {
-		if err := http.Serve(ln, mux); err != nil && err != http.ErrServerClosed {
-			log.Printf("installer http serve: %v", err)
+	// Get instance/module handle.
+	mod, _, _ := kernel32.NewProc("GetModuleHandleW").Call(0)
+	hInst := mod
+
+	clsName := utf16("STARBOXSetupWnd")
+	wc := wndClassEx{
+		Size:      uint32(unsafe.Sizeof(wndClassEx{})),
+		Style:     0,
+		WndProc:   wndProc,
+		HInstance: hInst,
+		HIcon:     curIcon(hInst),
+		HCursor:   0,
+		HbrBackground: uintptr(colorWindow + 1),
+		ClassName: clsName,
+	}
+	pRegisterClassEx.Call(uintptr(unsafe.Pointer(&wc)))
+
+	hwndMain, _, _ = pCreateWindowEx.Call(0,
+		uintptr(unsafe.Pointer(clsName)),
+		uintptr(unsafe.Pointer(utf16("星匣 STARBOX 安装器"))),
+		uintptr(wsOverlappedWindow),
+		0x80000000, 0x80000000, 560, 470, // CW_USEDEFAULT
+		0, 0, hInst, 0)
+
+	hwndFont = createWin32Font(16, false)
+	// Title static
+	hMsgStatic = createChild("STATIC", "安装 STARBOX", ssLeft, IDMsgStatic, 24, 30, 512, 24)
+	// Install dir row
+	createChild("STATIC", "安装位置:", ssLeft, 0, 24, 84, 80, 20)
+	hDirEdit = createChild("EDIT", defaultDir(), wsTabStop, IDDirEdit, 104, 80, 300, 26)
+	hBrowseBtn = createChild("BUTTON", "浏览…", bsPushButton, IDBrowse, 414, 79, 92, 28)
+	// Options
+	hSMChk = createChild("BUTTON", "创建开始菜单快捷方式", bsAutoCheckBox, IDSMCheck, 24, 130, 300, 24)
+	pSendMessage.Call(hSMChk, 0x00F1 /*BM_SETCHECK*/, 1, 0)
+	hDeskChk = createChild("BUTTON", "创建桌面快捷方式", bsAutoCheckBox, IDDesktopCh, 24, 160, 300, 24)
+	pSendMessage.Call(hDeskChk, 0x00F1, 1, 0)
+	// Install button
+	hInstallBtn = createChild("BUTTON", "安装", bsPushButton, IDInstall, 24, 210, 120, 34)
+	// Status
+	hStatus = createChild("STATIC", "", ssLeft, IDStatus, 24, 260, 512, 40)
+	// Done controls (hidden initially)
+	hRunBtn = createChild("BUTTON", "立即运行 STARBOX", bsPushButton, IDRun, 130, 210, 150, 34)
+	hDoneBtn = createChild("BUTTON", "完成", bsPushButton, IDDone, 300, 210, 90, 34)
+	pShowWindow.Call(hRunBtn, 0)
+	pShowWindow.Call(hDoneBtn, 0)
+
+	pShowWindow.Call(hwndMain, 5) // SW_SHOW
+	pUpdateWindow.Call(hwndMain)
+
+	// Message loop
+	var msg msgStruct
+	for {
+		r, _, _ := user32.NewProc("GetMessageW").Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
+		if int32(r) <= 0 {
+			break
 		}
-	}()
+		user32.NewProc("TranslateMessage").Call(uintptr(unsafe.Pointer(&msg)))
+		user32.NewProc("DispatchMessageW").Call(uintptr(unsafe.Pointer(&msg)))
+	}
 
-	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
-	dataPath := filepath.Join(os.TempDir(), "starbox_installer")
-
-	wv := webview2.NewWithOptions(webview2.WebViewOptions{
-		Debug:     false,
-		AutoFocus: true,
-		DataPath:  dataPath,
-		WindowOptions: webview2.WindowOptions{
-			Title:  "星匣 STARBOX 安装器",
-			Width:  920,
-			Height: 720,
-			IconId: 1, // app icon resource (rsrc)
-			Center: true,
-		},
-	})
-	if wv == nil {
-		msgBox("无法加载 WebView2 运行时。请先安装 Microsoft Edge WebView2 Runtime 后重试。", "STARBOX 安装器")
-		return
-	}
-	defer wv.Destroy()
-	if err := wv.Bind("pickFolder", pickFolder); err != nil {
-		log.Printf("bind pickFolder: %v", err)
-	}
-	// `window.close()` does not close a WebView2 window that the app itself created,
-	// so expose a bound function that destroys the window (endpoint of Run()).
-	if err := wv.Bind("closeApp", func() { go wv.Destroy() }); err != nil {
-		log.Printf("bind closeApp: %v", err)
-	}
-	wv.SetTitle("星匣 STARBOX 安装器")
-	wv.SetSize(920, 720, webview2.HintNone)
-	wv.Navigate(url)
-	wv.Run()
 }
