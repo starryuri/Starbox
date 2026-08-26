@@ -56,16 +56,15 @@ var (
 	colHoverBg    = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x08}
 )
 
-
 type App struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	cancel  context.CancelFunc
 	dataDir string
-	st    *monitor.State
-	acc   *account.Manager
-	cfg   *config.Config
-	set   settings.Settings
-	exe   string
+	st      *monitor.State
+	acc     *account.Manager
+	cfg     *config.Config
+	set     settings.Settings
+	exe     string
 
 	curUser account.User
 	curTok  string
@@ -80,26 +79,26 @@ type App struct {
 
 	loginBtn, regBtn, logoutBtn, accountBtn *widget.Clickable
 
-	notifList   []kb.Record
-	notifLoaded bool
+	notifList                []kb.Record
+	notifLoaded              bool
 	notifAllRead, notifClear *widget.Clickable
 
 	favList   []kb.Record
 	favLoaded bool
 
-	insRepos []githot.Repo
-	insLoaded bool
+	insRepos             []githot.Repo
+	insLoaded            bool
 	insRefresh, bindSave *widget.Clickable
-	bindRows   map[string]*widget.Clickable
-	bindSel    string
-	bindData map[string]interface{}
-	bindAcc, bindPass *widget.Editor
-	insMsg  string
+	bindRows             map[string]*widget.Clickable
+	bindSel              string
+	bindData             map[string]interface{}
+	bindAcc, bindPass    *widget.Editor
+	insMsg               string
 
-	ruleList   []kb.Record
-	ruleLoaded bool
+	ruleList                                  []kb.Record
+	ruleLoaded                                bool
 	ruleName, ruleCond, ruleParam, ruleAction *widget.Editor
-	ruleAdd *widget.Clickable
+	ruleAdd                                   *widget.Clickable
 
 	diskPath   string
 	diskItems  []du.Item
@@ -107,22 +106,34 @@ type App struct {
 	diskBack   *widget.Clickable
 	diskLoaded bool
 
-	kbTab    string
-	kbTabs   map[string]*widget.Clickable
-	addTitle *widget.Editor
-	kbAdd    *widget.Clickable
-	kbEnts   []kb.Record
-	kbLoaded bool
-	kbMsg    string
+	kbTab     string
+	kbTabs    map[string]*widget.Clickable
+	addTitle  *widget.Editor
+	kbAdd     *widget.Clickable
+	kbEnts    []kb.Record
+	kbLoaded  bool
+	kbMsg     string
 	kbDelBtns []*widget.Clickable
 	kbReload  bool
 
+	// kb edit
+	kbEditBtns   []*widget.Clickable
+	kbEditing    bool
+	kbEditID     string
+	kbEditTitle  *widget.Editor
+	kbEditSec    *widget.Editor
+	kbEditNote   *widget.Editor
+	kbEditRate   *widget.Editor
+	kbEditSave   *widget.Clickable
+	kbEditCancel *widget.Clickable
+	kbEditMsg    string
+
 	// anime detail
-	kbItemBtns []*widget.Clickable
-	curAnime  *kb.Record
-	kbDetail  bool
-	kbBack    *widget.Clickable
-	invoke    func()
+	kbItemBtns    []*widget.Clickable
+	curAnime      *kb.Record
+	kbDetail      bool
+	kbBack        *widget.Clickable
+	invoke        func()
 	detailSubject anime.BangumiSubject
 	detailPersons []anime.BangumiPerson
 	detailChars   []anime.BangumiCharacter
@@ -134,11 +145,11 @@ type App struct {
 }
 
 type driveInfo struct {
-	name     string
-	total    uint64
-	used     uint64
-	free     uint64
-	usedPct  float64
+	name    string
+	total   uint64
+	used    uint64
+	free    uint64
+	usedPct float64
 }
 
 var pages = []string{"overview", "disk", "rss", "insight", "kb", "favs", "notify", "rules", "settings"}
@@ -161,10 +172,15 @@ func newApp(dataDir string) *App {
 	a := &App{
 		ctx: ctx, cancel: cancel, dataDir: dataDir, st: st, acc: acc, cfg: cfg,
 		set: settings.Load(dataDir), exe: exe, page: "overview",
-		nav:      map[string]*widget.Clickable{},
-		nickEd:   &widget.Editor{SingleLine: true},
-		passEd:   &widget.Editor{SingleLine: true, Submit: true},
-		addTitle: &widget.Editor{SingleLine: true},
+		nav:         map[string]*widget.Clickable{},
+		nickEd:      &widget.Editor{SingleLine: true},
+		passEd:      &widget.Editor{SingleLine: true, Submit: true},
+		addTitle:    &widget.Editor{SingleLine: true},
+		kbEditTitle: &widget.Editor{SingleLine: true},
+		kbEditSec:   &widget.Editor{SingleLine: true},
+		kbEditNote:  &widget.Editor{SingleLine: true},
+		kbEditRate:  &widget.Editor{SingleLine: true},
+		kbEditSave:  &widget.Clickable{}, kbEditCancel: &widget.Clickable{},
 		kbTab:    "anime",
 		kbTabs:   map[string]*widget.Clickable{},
 		loginBtn: &widget.Clickable{}, regBtn: &widget.Clickable{}, logoutBtn: &widget.Clickable{},
@@ -178,7 +194,7 @@ func newApp(dataDir string) *App {
 		bindPass: &widget.Editor{SingleLine: true},
 		ruleName: &widget.Editor{SingleLine: true}, ruleCond: &widget.Editor{SingleLine: true},
 		ruleParam: &widget.Editor{SingleLine: true}, ruleAction: &widget.Editor{SingleLine: true},
-		ruleAdd: &widget.Clickable{},
+		ruleAdd:  &widget.Clickable{},
 		diskBack: &widget.Clickable{}, kbBack: &widget.Clickable{},
 	}
 	for _, p := range pages {
@@ -643,7 +659,7 @@ func (a *App) renderAccount(gtx layout.Context, th *material.Theme) layout.Dimen
 }
 
 var kbTabLabels = map[string]string{"anime": "番剧", "books": "书库", "study": "学习", "games": "游戏", "notes": "笔记"}
-var kbTabHint  = map[string]string{"anime": "番剧标题", "books": "书名", "study": "学习主题", "games": "游戏名称", "notes": "笔记标题"}
+var kbTabHint = map[string]string{"anime": "番剧标题", "books": "书名", "study": "学习主题", "games": "游戏名称", "notes": "笔记标题"}
 var kbSecField = map[string]string{"anime": "status", "books": "author", "study": "status", "games": "platform", "notes": "tags"}
 
 func (a *App) loadKB() {
@@ -651,9 +667,11 @@ func (a *App) loadKB() {
 	a.kbEnts = recs
 	a.kbItemBtns = make([]*widget.Clickable, len(recs))
 	a.kbDelBtns = make([]*widget.Clickable, len(recs))
+	a.kbEditBtns = make([]*widget.Clickable, len(recs))
 	for i := range a.kbItemBtns {
 		a.kbItemBtns[i] = &widget.Clickable{}
 		a.kbDelBtns[i] = &widget.Clickable{}
+		a.kbEditBtns[i] = &widget.Clickable{}
 	}
 }
 
@@ -668,6 +686,9 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 	}
 	if a.kbDetail && a.curAnime != nil {
 		return a.renderAnimeDetail(gtx, th)
+	}
+	if a.kbEditing {
+		return a.renderKbEdit(gtx, th)
 	}
 	keys := []string{"anime", "books", "study", "games", "notes"}
 	row := make([]layout.FlexChild, 0, len(keys))
@@ -745,17 +766,132 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 						return material.Body1(th, line).Layout(gtx)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						clicked, d := a.btnClick(th, gtx, a.kbDelBtns[i], "删除")
-						if clicked {
-							_ = a.store().Delete(a.kbTab, r.ID)
-							a.kbReload = true
-						}
-						return d
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								clicked, d := a.btnClick(th, gtx, a.kbEditBtns[i], "编辑")
+								if clicked {
+									a.startKbEdit(r)
+								}
+								return d
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								clicked, d := a.btnClick(th, gtx, a.kbDelBtns[i], "删除")
+								if clicked {
+									_ = a.store().Delete(a.kbTab, r.ID)
+									a.kbReload = true
+								}
+								return d
+							}),
+						)
 					}),
 				)
 			})
 		}),
 	)
+}
+
+func (a *App) startKbEdit(r kb.Record) {
+	a.kbEditing = true
+	a.kbEditID = r.ID
+	title, _ := r.Data["title"].(string)
+	sec := ""
+	if s, ok := r.Data[kbSecField[a.kbTab]].(string); ok {
+		sec = s
+	}
+	note, _ := r.Data["note"].(string)
+	rate := ""
+	if f, ok := r.Data["rate"].(float64); ok && f > 0 {
+		rate = strconv.FormatFloat(f, 'f', 1, 64)
+	}
+	a.kbEditTitle.SetText(title)
+	a.kbEditSec.SetText(sec)
+	a.kbEditNote.SetText(note)
+	a.kbEditRate.SetText(rate)
+	a.kbEditMsg = ""
+}
+
+var kbEditSecLabel = map[string]string{"anime": "状态（想追 / 在看 / 看过）", "books": "作者", "study": "状态", "games": "平台", "notes": "标签"}
+
+func (a *App) renderKbEdit(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			clicked, d := a.btnClick(th, gtx, a.kbEditCancel, "← 返回")
+			if clicked {
+				a.kbEditing = false
+				a.kbEditID = ""
+				a.kbEditMsg = ""
+			}
+			return d
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			ls := material.Label(th, 22, "编辑条目")
+			ls.Color = colFg
+			ls.Font.Weight = font.Bold
+			return ls.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Editor(th, a.kbEditTitle, "标题").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Editor(th, a.kbEditSec, kbEditSecLabel[a.kbTab]).Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Editor(th, a.kbEditRate, "评分（可选，数字）").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Editor(th, a.kbEditNote, "追评 / 备注").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			clicked, d := a.btnClick(th, gtx, a.kbEditSave, "保存")
+			if clicked {
+				a.saveKbEdit()
+			}
+			return d
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.Caption(th, a.kbEditMsg).Layout(gtx)
+		}),
+	)
+}
+
+func (a *App) saveKbEdit() {
+	title := strings.TrimSpace(a.kbEditTitle.Text())
+	if title == "" {
+		a.kbEditMsg = "标题不能为空"
+		return
+	}
+	data := map[string]any{"title": title}
+	if s := strings.TrimSpace(a.kbEditSec.Text()); s != "" {
+		data[kbSecField[a.kbTab]] = s
+	}
+	if s := strings.TrimSpace(a.kbEditRate.Text()); s != "" {
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			data["rate"] = f
+		}
+	}
+	if s := strings.TrimSpace(a.kbEditNote.Text()); s != "" {
+		data["note"] = s
+	}
+	if _, ok := data[kbSecField[a.kbTab]]; !ok {
+		if a.kbTab == "anime" {
+			data["status"] = "想追"
+		} else if a.kbTab == "study" {
+			data["status"] = "规划中"
+		}
+	}
+	_, _ = a.store().Update(a.kbTab, a.kbEditID, data)
+	a.kbEditing = false
+	a.kbEditID = ""
+	a.kbEditMsg = ""
+	a.kbReload = true
 }
 
 func (a *App) renderAnimeDetail(gtx layout.Context, th *material.Theme) layout.Dimensions {
