@@ -114,6 +114,8 @@ type App struct {
 	kbEnts   []kb.Record
 	kbLoaded bool
 	kbMsg    string
+	kbDelBtns []*widget.Clickable
+	kbReload  bool
 
 	// anime detail
 	kbItemBtns []*widget.Clickable
@@ -648,12 +650,18 @@ func (a *App) loadKB() {
 	recs, _ := a.store().List(a.kbTab)
 	a.kbEnts = recs
 	a.kbItemBtns = make([]*widget.Clickable, len(recs))
+	a.kbDelBtns = make([]*widget.Clickable, len(recs))
 	for i := range a.kbItemBtns {
 		a.kbItemBtns[i] = &widget.Clickable{}
+		a.kbDelBtns[i] = &widget.Clickable{}
 	}
 }
 
 func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	if a.kbReload {
+		a.loadKB()
+		a.kbReload = false
+	}
 	if !a.kbLoaded {
 		a.loadKB()
 		a.kbLoaded = true
@@ -725,14 +733,26 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 				if sec != "" {
 					line += "   [" + sec + "]"
 				}
-				if a.kbTab == "anime" {
-					d := a.navRow(gtx, th, a.kbItemBtns[i], line, false, 15)
-					if a.kbItemBtns[i].Clicked(gtx) {
-						a.openAnime(r)
-					}
-					return d
-				}
-				return material.Body1(th, line).Layout(gtx)
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						if a.kbTab == "anime" {
+							d := a.navRow(gtx, th, a.kbItemBtns[i], line, false, 15)
+							if a.kbItemBtns[i].Clicked(gtx) {
+								a.openAnime(r)
+							}
+							return d
+						}
+						return material.Body1(th, line).Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						clicked, d := a.btnClick(th, gtx, a.kbDelBtns[i], "删除")
+						if clicked {
+							_ = a.store().Delete(a.kbTab, r.ID)
+							a.kbReload = true
+						}
+						return d
+					}),
+				)
 			})
 		}),
 	)
@@ -901,138 +921,6 @@ func numID(v interface{}) (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-func (a *App) renderAnimeDetailOld(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	backClick, d := a.btnClick(th, gtx, a.kbBack, "← 返回")
-	if backClick {
-		a.kbDetail = false
-		a.curAnime = nil
-	}
-	data := map[string]interface{}{}
-	if a.curAnime != nil {
-		data = a.curAnime.Data
-	}
-	title, _ := data["title"].(string)
-	if a.detailSubject.NameCN != "" {
-		title = a.detailSubject.NameCN
-	} else if a.detailSubject.Name != "" {
-		title = a.detailSubject.Name
-	}
-	status, _ := data["status"].(string)
-	rate, _ := data["rate"].(float64)
-	total, _ := data["total"].(float64)
-	note, _ := data["note"].(string)
-	// studios from persons with relation containing 制作/动画
-	var studios []string
-	for _, p := range a.detailPersons {
-		if strings.Contains(p.Relation, "制作") || strings.Contains(p.Relation, "动画") {
-			studios = append(studios, p.Name)
-		}
-	}
-	if len(studios) == 0 {
-		for _, p := range a.detailPersons {
-			studios = append(studios, p.Name+"（"+p.Relation+"）")
-		}
-	}
-
-	children := []layout.FlexChild{
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					ls := material.Label(th, 15, "← 返回")
-					ls.Color = colMuted
-					return layout.Inset{Top: 4}.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return ls.Layout(gtx) })
-				}),
-			)
-		}),
-	}
-	_ = backClick
-	_ = d
-	_ = children
-
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return d
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ls := material.Label(th, 22, title)
-			ls.Color = colFg
-			ls.Font.Weight = font.Bold
-			return ls.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			meta := status
-			if rate > 0 {
-				if meta != "" {
-					meta += " · "
-				}
-				meta += "评分 " + strconv.FormatFloat(rate, 'f', 1, 64)
-			}
-			if total > 0 {
-				if meta != "" {
-					meta += " · "
-				}
-				meta += strconv.FormatFloat(total, 'f', 0, 64) + " 集"
-			}
-			if a.detailSubject.Date != "" {
-				if meta != "" {
-					meta += " · "
-				}
-				meta += a.detailSubject.Date
-			}
-			ls := material.Label(th, 14, meta)
-			ls.Color = colMuted
-			return ls.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ls := material.Label(th, 13, "制作公司 / 制作人员")
-			ls.Color = colAccent
-			return ls.Layout(gtx)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if len(studios) == 0 {
-				return material.Caption(th, "加载中…").Layout(gtx)
-			}
-			return (&layout.List{}).Layout(gtx, len(studios), func(gtx layout.Context, i int) layout.Dimensions {
-				return material.Body1(th, "·  "+studios[i]).Layout(gtx)
-			})
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ls := material.Label(th, 13, "Cast / CV")
-			ls.Color = colAccent
-			return ls.Layout(gtx)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if len(a.detailChars) == 0 {
-				if !a.detailLoaded {
-					return material.Caption(th, "加载中…").Layout(gtx)
-				}
-				return material.Caption(th, "暂无数据").Layout(gtx)
-			}
-			return (&layout.List{}).Layout(gtx, len(a.detailChars), func(gtx layout.Context, i int) layout.Dimensions {
-				c := a.detailChars[i]
-				line := "·  " + c.Name
-				if len(c.Actors) > 0 {
-					line += "   CV: " + c.Actors[0].Name
-				}
-				return material.Body1(th, line).Layout(gtx)
-			})
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if note != "" {
-				ls := material.Label(th, 13, "追评："+note)
-				ls.Color = colMuted
-				return ls.Layout(gtx)
-			}
-			return layout.Dimensions{}
-		}),
-	)
 }
 
 func (a *App) renderNotif(gtx layout.Context, th *material.Theme) layout.Dimensions {
