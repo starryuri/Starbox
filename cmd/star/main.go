@@ -28,6 +28,7 @@ import (
 
 	"butler/internal/account"
 	"butler/internal/config"
+	"butler/internal/du"
 	"butler/internal/githot"
 	"butler/internal/kb"
 	"butler/internal/monitor"
@@ -80,6 +81,12 @@ type App struct {
 	ruleLoaded bool
 	ruleName, ruleCond, ruleParam, ruleAction *widget.Editor
 	ruleAdd *widget.Clickable
+
+	diskPath   string
+	diskItems  []du.Item
+	diskBtns   []*widget.Clickable
+	diskBack   *widget.Clickable
+	diskLoaded bool
 
 	kbTab    string
 	kbTabs   map[string]*widget.Clickable
@@ -139,6 +146,7 @@ func newApp(dataDir string) *App {
 		ruleName: &widget.Editor{SingleLine: true}, ruleCond: &widget.Editor{SingleLine: true},
 		ruleParam: &widget.Editor{SingleLine: true}, ruleAction: &widget.Editor{SingleLine: true},
 		ruleAdd: &widget.Clickable{},
+		diskBack: &widget.Clickable{},
 	}
 	for _, p := range pages {
 		a.nav[p] = &widget.Clickable{}
@@ -405,14 +413,83 @@ func (a *App) renderSettings(gtx layout.Context, th *material.Theme) layout.Dime
 	)
 }
 
+func (a *App) openFolder(path string) {
+	if path == "" {
+		a.diskPath = ""
+		its := make([]du.Item, 0, len(a.drives))
+		for _, d := range a.drives {
+			its = append(its, du.Item{Name: d.name, Size: int64(d.total)})
+		}
+		a.setDiskItems(its)
+		return
+	}
+	items, err := du.Scan(path, 12)
+	if err != nil {
+		return
+	}
+	a.diskPath = path
+	a.setDiskItems(items)
+}
+
+func (a *App) setDiskItems(items []du.Item) {
+	a.diskItems = items
+	a.diskBtns = make([]*widget.Clickable, len(items))
+	for i := range a.diskBtns {
+		a.diskBtns[i] = &widget.Clickable{}
+	}
+}
+
 func (a *App) renderDisk(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	if !a.diskLoaded {
+		a.openFolder("")
+		a.diskLoaded = true
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return material.H5(th, "磁盘").Layout(gtx)
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.H5(th, "磁盘").Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if a.diskPath == "" {
+						return layout.Dimensions{}
+					}
+					clicked, d := a.btnClick(th, gtx, a.diskBack, "← 返回")
+					if clicked {
+						parent := filepath.Dir(a.diskPath)
+						if parent == a.diskPath {
+							a.openFolder("")
+						} else {
+							a.openFolder(parent)
+						}
+					}
+					return d
+				}),
+			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			txt := "本机磁盘 · 目录占用"
+			if a.diskPath != "" {
+				txt = a.diskPath
+			}
+			return material.Caption(th, txt).Layout(gtx)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return material.Caption(th, "目录占用视图（原生实现后续补充）").Layout(gtx)
+			return (&layout.List{}).Layout(gtx, len(a.diskItems), func(gtx layout.Context, i int) layout.Dimensions {
+				item := a.diskItems[i]
+				c := a.diskBtns[i]
+				clicked, d := a.btnClick(th, gtx, c, item.Name+"   "+humanBytes(uint64(item.Size)))
+				if clicked {
+					np := item.Name
+					if a.diskPath != "" {
+						np = filepath.Join(a.diskPath, item.Name)
+					}
+					a.openFolder(np)
+				}
+				return d
+			})
 		}),
 	)
 }
