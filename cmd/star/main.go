@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"image"
+	"image/color"
 	"log"
 	"os"
 	"os/signal"
@@ -20,6 +22,8 @@ import (
 	"gioui.org/font/opentype"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
@@ -37,6 +41,20 @@ import (
 )
 
 const dataDirName = "data"
+
+// STARBOX dark palette (deep navy + cyan/violet accent).
+var (
+	colBg         = color.NRGBA{R: 0x0c, G: 0x10, B: 0x20, A: 0xff} // #0c1020
+	colSide       = color.NRGBA{R: 0x10, G: 0x16, B: 0x2b, A: 0xff} // #10162b
+	colFg         = color.NRGBA{R: 0xe7, G: 0xec, B: 0xf7, A: 0xff} // #e7ecf7
+	colMuted      = color.NRGBA{R: 0x93, G: 0xa0, B: 0xbd, A: 0xff} // #93a0bd
+	colAccent     = color.NRGBA{R: 0x22, G: 0xd3, B: 0xee, A: 0xff} // #22d3ee
+	colAccent2    = color.NRGBA{R: 0x8b, G: 0x5c, B: 0xf6, A: 0xff} // #8b5cf6
+	colContrastFg = color.NRGBA{R: 0x0b, G: 0x0e, B: 0x17, A: 0xff} // #0b0e17
+	colActiveBg   = color.NRGBA{R: 0x22, G: 0xd3, B: 0xee, A: 0x2a} // accent 16%
+	colHoverBg    = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x08}
+)
+
 
 type App struct {
 	ctx    context.Context
@@ -212,6 +230,8 @@ func main() {
 			case app.FrameEvent:
 				if th == nil {
 					th = material.NewTheme()
+					th.Palette = material.Palette{Bg: colBg, Fg: colFg, ContrastBg: colAccent, ContrastFg: colContrastFg}
+					th.TextSize = 15
 					coll := loadCJKFont(gofont.Collection())
 					th.Shaper = text.NewShaper(text.WithCollection(coll))
 					a.refreshDrives()
@@ -250,8 +270,10 @@ func (a *App) btnClick(th *material.Theme, gtx layout.Context, b *widget.Clickab
 }
 
 func (a *App) render(gtx layout.Context, th *material.Theme) {
+	paint.Fill(gtx.Ops, colBg)
 	layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = image.Pt(220, gtx.Constraints.Min.Y)
 			return a.renderSidebar(gtx, th)
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -262,40 +284,75 @@ func (a *App) render(gtx layout.Context, th *material.Theme) {
 	)
 }
 
+func (a *App) navRow(gtx layout.Context, th *material.Theme, c *widget.Clickable, label string, active bool, size unit.Sp) layout.Dimensions {
+	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if active {
+			paint.FillShape(gtx.Ops, colActiveBg, clip.RRect{Rect: image.Rect(0, 0, gtx.Constraints.Min.X, gtx.Constraints.Min.Y), NW: 9, NE: 9, SW: 9, SE: 9}.Op(gtx.Ops))
+		} else if c.Hovered() {
+			paint.FillShape(gtx.Ops, colHoverBg, clip.RRect{Rect: image.Rect(0, 0, gtx.Constraints.Min.X, gtx.Constraints.Min.Y), NW: 9, NE: 9, SW: 9, SE: 9}.Op(gtx.Ops))
+		}
+		tc := colMuted
+		if active {
+			tc = colAccent
+		}
+		ls := material.Label(th, size, label)
+		ls.Color = tc
+		return layout.Inset{Top: 9, Bottom: 9, Left: 16, Right: 16}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ls.Layout(gtx)
+		})
+	})
+}
+
 func (a *App) renderSidebar(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	return layout.Inset{Top: unit.Dp(14), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return material.H6(th, "星匣 STARBOX").Layout(gtx)
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return material.Caption(th, "你的次元 · 收于一匣").Layout(gtx)
-			}),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+	paint.Fill(gtx.Ops, colSide)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: 20, Bottom: 12, Left: 20, Right: 18}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						ls := material.Label(th, 20, "星匣 STARBOX")
+						ls.Color = colFg
+						ls.Font.Weight = font.Bold
+						return ls.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						ls := material.Label(th, 12, "你的次元 · 收于一匣")
+						ls.Color = colMuted
+						return ls.Layout(gtx)
+					}),
+				)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return (&layout.List{}).Layout(gtx, len(pages), func(gtx layout.Context, i int) layout.Dimensions {
 					p := pages[i]
-					btn := a.nav[p]
-					clicked, d := a.btnClick(th, gtx, btn, pageLabels[p])
-					if clicked {
+					c := a.nav[p]
+					d := a.navRow(gtx, th, c, pageLabels[p], a.page == p, 15)
+					if c.Clicked(gtx) {
 						a.page = p
 					}
 					return d
 				})
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10), Bottom: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				label := "登录 / 注册"
 				if a.curUser.ID != "" {
 					label = "👤 " + a.curUser.Nickname
 				}
-				clicked, d := a.btnClick(th, gtx, a.accountBtn, label)
-				if clicked {
+				d := a.navRow(gtx, th, a.accountBtn, label, a.page == "account", 14)
+				if a.accountBtn.Clicked(gtx) {
 					a.page = "account"
 				}
 				return d
-			}),
-		)
-	})
+			})
+		}),
+	)
 }
 
 func (a *App) renderPage(gtx layout.Context, th *material.Theme, p string) layout.Dimensions {
