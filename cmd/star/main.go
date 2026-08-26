@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"gioui.org/app"
 	"gioui.org/font"
@@ -57,6 +58,10 @@ type App struct {
 	acctMsg        string
 
 	loginBtn, regBtn, logoutBtn, accountBtn *widget.Clickable
+
+	notifList   []kb.Record
+	notifLoaded bool
+	notifAllRead, notifClear *widget.Clickable
 
 	kbTab    string
 	kbTabs   map[string]*widget.Clickable
@@ -106,6 +111,7 @@ func newApp(dataDir string) *App {
 		kbTabs:   map[string]*widget.Clickable{},
 		loginBtn: &widget.Clickable{}, regBtn: &widget.Clickable{}, logoutBtn: &widget.Clickable{},
 		accountBtn: &widget.Clickable{}, kbAdd: &widget.Clickable{},
+		notifAllRead: &widget.Clickable{}, notifClear: &widget.Clickable{},
 	}
 	for _, p := range pages {
 		a.nav[p] = &widget.Clickable{}
@@ -197,6 +203,14 @@ func (a *App) refreshDrives() {
 	}
 }
 
+// btnClick renders a material button and reports whether it was clicked. In Gio a
+// clickable must be laid out before Clicked() reflects the gesture, so they are
+// done together here.
+func (a *App) btnClick(th *material.Theme, gtx layout.Context, b *widget.Clickable, txt string) (bool, layout.Dimensions) {
+	d := material.Button(th, b, txt).Layout(gtx)
+	return b.Clicked(gtx), d
+}
+
 func (a *App) render(gtx layout.Context, th *material.Theme) {
 	layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -224,20 +238,23 @@ func (a *App) renderSidebar(gtx layout.Context, th *material.Theme) layout.Dimen
 				return (&layout.List{}).Layout(gtx, len(pages), func(gtx layout.Context, i int) layout.Dimensions {
 					p := pages[i]
 					btn := a.nav[p]
-					if btn.Clicked(gtx) {
+					clicked, d := a.btnClick(th, gtx, btn, pageLabels[p])
+					if clicked {
 						a.page = p
 					}
-					return material.Button(th, btn, pageLabels[p]).Layout(gtx)
+					return d
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if a.accountBtn.Clicked(gtx) {
+				label := "登录 / 注册"
+				if a.curUser.ID != "" {
+					label = "👤 " + a.curUser.Nickname
+				}
+				clicked, d := a.btnClick(th, gtx, a.accountBtn, label)
+				if clicked {
 					a.page = "account"
 				}
-				if a.curUser.ID != "" {
-					return material.Button(th, a.accountBtn, "👤 "+a.curUser.Nickname).Layout(gtx)
-				}
-				return material.Button(th, a.accountBtn, "登录 / 注册").Layout(gtx)
+				return d
 			}),
 		)
 	})
@@ -255,6 +272,10 @@ func (a *App) renderPage(gtx layout.Context, th *material.Theme, p string) layou
 		return a.renderAccount(gtx, th)
 	case "kb":
 		return a.renderKB(gtx, th)
+	case "notify":
+		return a.renderNotif(gtx, th)
+	case "rss":
+		return a.renderRSS(gtx, th)
 	default:
 		return material.Caption(th, "模块「"+p+"」正在迁移到原生界面……").Layout(gtx)
 	}
@@ -375,13 +396,14 @@ func (a *App) renderAccount(gtx layout.Context, th *material.Theme) layout.Dimen
 		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if a.curUser.ID != "" {
-				if a.logoutBtn.Clicked(gtx) {
+				clicked, d := a.btnClick(th, gtx, a.logoutBtn, "退出登录")
+				if clicked {
 					a.acc.Logout(a.curTok)
 					a.curUser = account.User{}
 					a.curTok = ""
 					a.acctMsg = "已退出登录"
 				}
-				return material.Button(th, a.logoutBtn, "退出登录").Layout(gtx)
+				return d
 			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -393,33 +415,35 @@ func (a *App) renderAccount(gtx layout.Context, th *material.Theme) layout.Dimen
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if a.loginBtn.Clicked(gtx) {
-						u, tok, err := a.acc.Login(strings.TrimSpace(a.nickEd.Text()), a.passEd.Text())
-						if err != nil {
-							a.acctMsg = err.Error()
-						} else {
-							a.curUser = u
-							a.curTok = tok
-							a.acctMsg = "已登录"
-						}
-					}
-					if a.regBtn.Clicked(gtx) {
-						u, tok, err := a.acc.Register(strings.TrimSpace(a.nickEd.Text()), a.passEd.Text())
-						if err != nil {
-							a.acctMsg = err.Error()
-						} else {
-							a.curUser = u
-							a.curTok = tok
-							a.acctMsg = "注册成功，已登录"
-						}
-					}
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return material.Button(th, a.regBtn, "注册").Layout(gtx)
+							clicked, d := a.btnClick(th, gtx, a.regBtn, "注册")
+							if clicked {
+								u, tok, err := a.acc.Register(strings.TrimSpace(a.nickEd.Text()), a.passEd.Text())
+								if err != nil {
+									a.acctMsg = err.Error()
+								} else {
+									a.curUser = u
+									a.curTok = tok
+									a.acctMsg = "注册成功，已登录"
+								}
+							}
+							return d
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return material.Button(th, a.loginBtn, "登录").Layout(gtx)
+							clicked, d := a.btnClick(th, gtx, a.loginBtn, "登录")
+							if clicked {
+								u, tok, err := a.acc.Login(strings.TrimSpace(a.nickEd.Text()), a.passEd.Text())
+								if err != nil {
+									a.acctMsg = err.Error()
+								} else {
+									a.curUser = u
+									a.curTok = tok
+									a.acctMsg = "已登录"
+								}
+							}
+							return d
 						}),
 					)
 				}),
@@ -451,11 +475,12 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 	for _, k := range keys {
 		k := k
 		row = append(row, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if a.kbTabs[k].Clicked(gtx) && a.kbTab != k {
+			clicked, d := a.btnClick(th, gtx, a.kbTabs[k], kbTabLabels[k])
+			if clicked && a.kbTab != k {
 				a.kbTab = k
 				a.loadKB()
 			}
-			return material.Button(th, a.kbTabs[k], kbTabLabels[k]).Layout(gtx)
+			return d
 		}))
 	}
 
@@ -474,7 +499,8 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 					return material.Editor(th, a.addTitle, kbTabHint[a.kbTab]).Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if a.kbAdd.Clicked(gtx) {
+					clicked, d := a.btnClick(th, gtx, a.kbAdd, "＋ 添加")
+					if clicked {
 						title := strings.TrimSpace(a.addTitle.Text())
 						if title != "" {
 							data := map[string]any{"title": title}
@@ -491,7 +517,7 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 							a.loadKB()
 						}
 					}
-					return material.Button(th, a.kbAdd, "＋ 添加").Layout(gtx)
+					return d
 				}),
 			)
 		}),
@@ -509,6 +535,109 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 					line += "   [" + sec + "]"
 				}
 				return material.Body1(th, line).Layout(gtx)
+			})
+		}),
+	)
+}
+
+func (a *App) renderNotif(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	if !a.notifLoaded {
+		a.notifList, _ = a.store().List("notif")
+		a.notifLoaded = true
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H5(th, "通知中心").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					clicked, d := a.btnClick(th, gtx, a.notifAllRead, "全部标为已读")
+					if clicked {
+						list, _ := a.store().List("notif")
+						for _, r := range list {
+							dd := map[string]any{}
+							for k, v := range r.Data {
+								dd[k] = v
+							}
+							dd["read"] = true
+							_, _ = a.store().Update("notif", r.ID, dd)
+						}
+						a.notifList, _ = a.store().List("notif")
+					}
+					return d
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					clicked, d := a.btnClick(th, gtx, a.notifClear, "清除已读")
+					if clicked {
+						list, _ := a.store().List("notif")
+						for _, r := range list {
+							if rd, ok := r.Data["read"].(bool); ok && rd {
+								_ = a.store().Delete("notif", r.ID)
+							}
+						}
+						a.notifList, _ = a.store().List("notif")
+					}
+					return d
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if len(a.notifList) == 0 {
+				return material.Caption(th, "暂无通知").Layout(gtx)
+			}
+			return (&layout.List{}).Layout(gtx, len(a.notifList), func(gtx layout.Context, i int) layout.Dimensions {
+				r := a.notifList[i]
+				title, _ := r.Data["title"].(string)
+				body, _ := r.Data["body"].(string)
+				unix, _ := r.Data["unix"].(float64)
+				line := "•  " + title
+				if body != "" {
+					line += " — " + body
+				}
+				if unix > 0 {
+					line += "   (" + time.Unix(int64(unix), 0).Format("01-02 15:04") + ")"
+				}
+				return material.Body1(th, line).Layout(gtx)
+			})
+		}),
+	)
+}
+
+func (a *App) renderRSS(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	snap := a.st.Snapshot()
+	type entry struct{ feed, title string }
+	var es []entry
+	for k, v := range snap {
+		if !strings.HasPrefix(k, "rss_") {
+			continue
+		}
+		lines := strings.Split(v, "\n")
+		head := ""
+		if len(lines) > 0 {
+			head = lines[0]
+		}
+		for _, l := range lines[1:] {
+			l = strings.TrimSpace(l)
+			if strings.HasPrefix(l, "- ") {
+				es = append(es, entry{feed: head, title: strings.TrimSpace(strings.TrimPrefix(l, "-"))})
+			}
+		}
+	}
+	if len(es) == 0 {
+		es = append(es, entry{feed: "", title: "暂无订阅内容（请确认 config.json 已配置 rss 任务）"})
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H5(th, "订阅").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return (&layout.List{}).Layout(gtx, len(es), func(gtx layout.Context, i int) layout.Dimensions {
+				return material.Body1(th, "·  "+es[i].title).Layout(gtx)
 			})
 		}),
 	)
