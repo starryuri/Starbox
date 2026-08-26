@@ -82,12 +82,17 @@ config.example.json     配置模板（真实 config.json 已被 .gitignore 排�
 
 ```powershell
 go mod tidy                     # 拉取依赖
-go build -o starbox.exe ./cmd/butler        # 控制台后端版
+go build -o starbox.exe ./cmd/butler        # 控制台后端版（WebView2）
 # 无控制台黑框的 GUI 版（推荐发布）：
 go build -ldflags="-H=windowsgui" -o starbox.exe ./cmd/butler
 # 自包含安装包（含 starbox.exe + DLL + 默认配置）：
 go build -ldflags="-H=windowsgui" -o setup.exe ./cmd/setup
+
+# 原生 UI（Gio，无需 WebView2）
+go build -o star.exe ./cmd/star
 ```
+
+**原生 UI 改造中**：`cmd/star` 用 [Gio](https://gioui.org) 重写为原生界面（无 WebView2），复用现有后端包（account / kb / monitor / sched / settings / gopsutil）。已实现概况、磁盘下钻、订阅、情报、知识库（番剧/书库/学习/游戏/笔记）、收藏、通知、规则、设置、账户登录注册等页面。当前与 `cmd/butler`（WebView2 版）共存，逐步替换。
 
 ## 运行
 
