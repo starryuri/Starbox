@@ -58,11 +58,13 @@ type App struct {
 
 	loginBtn, regBtn, logoutBtn, accountBtn *widget.Clickable
 
-	animeTitle *widget.Editor
-	kbAdd      *widget.Clickable
-	animeList  []kb.Record
-	animeMsg   string
-	animeLoaded bool
+	kbTab    string
+	kbTabs   map[string]*widget.Clickable
+	addTitle *widget.Editor
+	kbAdd    *widget.Clickable
+	kbEnts   []kb.Record
+	kbLoaded bool
+	kbMsg    string
 
 	autostart widget.Bool
 	saveMsg   string
@@ -96,15 +98,20 @@ func newApp(dataDir string) *App {
 	a := &App{
 		ctx: ctx, cancel: cancel, dataDir: dataDir, st: st, acc: acc, cfg: cfg,
 		set: settings.Load(dataDir), exe: exe, page: "overview",
-		nav:        map[string]*widget.Clickable{},
-		nickEd:     &widget.Editor{SingleLine: true},
-		passEd:     &widget.Editor{SingleLine: true, Submit: true},
-		animeTitle: &widget.Editor{SingleLine: true},
-		loginBtn:   &widget.Clickable{}, regBtn: &widget.Clickable{}, logoutBtn: &widget.Clickable{},
+		nav:      map[string]*widget.Clickable{},
+		nickEd:   &widget.Editor{SingleLine: true},
+		passEd:   &widget.Editor{SingleLine: true, Submit: true},
+		addTitle: &widget.Editor{SingleLine: true},
+		kbTab:    "anime",
+		kbTabs:   map[string]*widget.Clickable{},
+		loginBtn: &widget.Clickable{}, regBtn: &widget.Clickable{}, logoutBtn: &widget.Clickable{},
 		accountBtn: &widget.Clickable{}, kbAdd: &widget.Clickable{},
 	}
 	for _, p := range pages {
 		a.nav[p] = &widget.Clickable{}
+	}
+	for _, t := range []string{"anime", "books", "study", "games", "notes"} {
+		a.kbTabs[t] = &widget.Clickable{}
 	}
 	if a.set.AutoStart {
 		_ = settings.SetAutoStart(true, exe)
@@ -425,33 +432,63 @@ func (a *App) renderAccount(gtx layout.Context, th *material.Theme) layout.Dimen
 	)
 }
 
-func (a *App) loadAnime() {
-	recs, _ := a.store().List("anime")
-	a.animeList = recs
+var kbTabLabels = map[string]string{"anime": "番剧", "books": "书库", "study": "学习", "games": "游戏", "notes": "笔记"}
+var kbTabHint  = map[string]string{"anime": "番剧标题", "books": "书名", "study": "学习主题", "games": "游戏名称", "notes": "笔记标题"}
+var kbSecField = map[string]string{"anime": "status", "books": "author", "study": "status", "games": "platform", "notes": "tags"}
+
+func (a *App) loadKB() {
+	recs, _ := a.store().List(a.kbTab)
+	a.kbEnts = recs
 }
 
 func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	if !a.animeLoaded {
-		a.loadAnime()
-		a.animeLoaded = true
+	if !a.kbLoaded {
+		a.loadKB()
+		a.kbLoaded = true
 	}
+	keys := []string{"anime", "books", "study", "games", "notes"}
+	row := make([]layout.FlexChild, 0, len(keys))
+	for _, k := range keys {
+		k := k
+		row = append(row, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if a.kbTabs[k].Clicked(gtx) && a.kbTab != k {
+				a.kbTab = k
+				a.loadKB()
+			}
+			return material.Button(th, a.kbTabs[k], kbTabLabels[k]).Layout(gtx)
+		}))
+	}
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return material.H5(th, "知识库 · 番剧").Layout(gtx)
+			return material.H5(th, "知识库").Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, row...)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return material.Editor(th, a.animeTitle, "番剧标题").Layout(gtx)
+					return material.Editor(th, a.addTitle, kbTabHint[a.kbTab]).Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if a.kbAdd.Clicked(gtx) {
-						title := strings.TrimSpace(a.animeTitle.Text())
+						title := strings.TrimSpace(a.addTitle.Text())
 						if title != "" {
-							_, _ = a.store().Add("anime", map[string]any{"title": title, "status": "想追"})
-							a.animeTitle.SetText("")
-							a.loadAnime()
+							data := map[string]any{"title": title}
+							switch a.kbTab {
+							case "anime":
+								data["status"] = "想追"
+							case "study":
+								data["status"] = "规划中"
+							case "games":
+								data["status"] = "想玩"
+							}
+							_, _ = a.store().Add(a.kbTab, data)
+							a.addTitle.SetText("")
+							a.loadKB()
 						}
 					}
 					return material.Button(th, a.kbAdd, "＋ 添加").Layout(gtx)
@@ -460,11 +497,18 @@ func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return (&layout.List{}).Layout(gtx, len(a.animeList), func(gtx layout.Context, i int) layout.Dimensions {
-				r := a.animeList[i]
+			if len(a.kbEnts) == 0 {
+				return material.Caption(th, "暂无条目").Layout(gtx)
+			}
+			return (&layout.List{}).Layout(gtx, len(a.kbEnts), func(gtx layout.Context, i int) layout.Dimensions {
+				r := a.kbEnts[i]
 				title, _ := r.Data["title"].(string)
-				status, _ := r.Data["status"].(string)
-				return material.Body1(th, "•  "+title+"   ["+status+"]").Layout(gtx)
+				sec, _ := r.Data[kbSecField[a.kbTab]].(string)
+				line := "•  " + title
+				if sec != "" {
+					line += "   [" + sec + "]"
+				}
+				return material.Body1(th, line).Layout(gtx)
 			})
 		}),
 	)
