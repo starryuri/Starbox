@@ -56,6 +56,14 @@ type App struct {
 	nickEd, passEd *widget.Editor
 	acctMsg        string
 
+	loginBtn, regBtn, logoutBtn, accountBtn *widget.Clickable
+
+	animeTitle *widget.Editor
+	kbAdd      *widget.Clickable
+	animeList  []kb.Record
+	animeMsg   string
+	animeLoaded bool
+
 	autostart widget.Bool
 	saveMsg   string
 }
@@ -88,9 +96,12 @@ func newApp(dataDir string) *App {
 	a := &App{
 		ctx: ctx, cancel: cancel, dataDir: dataDir, st: st, acc: acc, cfg: cfg,
 		set: settings.Load(dataDir), exe: exe, page: "overview",
-		nav:    map[string]*widget.Clickable{},
-		nickEd: &widget.Editor{SingleLine: true},
-		passEd: &widget.Editor{SingleLine: true, Submit: true},
+		nav:        map[string]*widget.Clickable{},
+		nickEd:     &widget.Editor{SingleLine: true},
+		passEd:     &widget.Editor{SingleLine: true, Submit: true},
+		animeTitle: &widget.Editor{SingleLine: true},
+		loginBtn:   &widget.Clickable{}, regBtn: &widget.Clickable{}, logoutBtn: &widget.Clickable{},
+		accountBtn: &widget.Clickable{}, kbAdd: &widget.Clickable{},
 	}
 	for _, p := range pages {
 		a.nav[p] = &widget.Clickable{}
@@ -213,10 +224,13 @@ func (a *App) renderSidebar(gtx layout.Context, th *material.Theme) layout.Dimen
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if a.curUser.ID != "" {
-					return material.Body2(th, "👤 "+a.curUser.Nickname).Layout(gtx)
+				if a.accountBtn.Clicked(gtx) {
+					a.page = "account"
 				}
-				return material.Body2(th, "游客模式").Layout(gtx)
+				if a.curUser.ID != "" {
+					return material.Button(th, a.accountBtn, "👤 "+a.curUser.Nickname).Layout(gtx)
+				}
+				return material.Button(th, a.accountBtn, "登录 / 注册").Layout(gtx)
 			}),
 		)
 	})
@@ -230,6 +244,10 @@ func (a *App) renderPage(gtx layout.Context, th *material.Theme, p string) layou
 		return a.renderSettings(gtx, th)
 	case "disk":
 		return a.renderDisk(gtx, th)
+	case "account":
+		return a.renderAccount(gtx, th)
+	case "kb":
+		return a.renderKB(gtx, th)
 	default:
 		return material.Caption(th, "模块「"+p+"」正在迁移到原生界面……").Layout(gtx)
 	}
@@ -331,6 +349,123 @@ func (a *App) renderDisk(gtx layout.Context, th *material.Theme) layout.Dimensio
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return material.Caption(th, "目录占用视图（原生实现后续补充）").Layout(gtx)
+		}),
+	)
+}
+
+func (a *App) renderAccount(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H5(th, "账户").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if a.curUser.ID != "" {
+				return material.Body1(th, "已登录："+a.curUser.Nickname).Layout(gtx)
+			}
+			return material.Caption(th, "注册 / 登录本地账户，数据保存在本机。").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if a.curUser.ID != "" {
+				if a.logoutBtn.Clicked(gtx) {
+					a.acc.Logout(a.curTok)
+					a.curUser = account.User{}
+					a.curTok = ""
+					a.acctMsg = "已退出登录"
+				}
+				return material.Button(th, a.logoutBtn, "退出登录").Layout(gtx)
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.Editor(th, a.nickEd, "昵称").Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.Editor(th, a.passEd, "密码（至少 4 位）").Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if a.loginBtn.Clicked(gtx) {
+						u, tok, err := a.acc.Login(strings.TrimSpace(a.nickEd.Text()), a.passEd.Text())
+						if err != nil {
+							a.acctMsg = err.Error()
+						} else {
+							a.curUser = u
+							a.curTok = tok
+							a.acctMsg = "已登录"
+						}
+					}
+					if a.regBtn.Clicked(gtx) {
+						u, tok, err := a.acc.Register(strings.TrimSpace(a.nickEd.Text()), a.passEd.Text())
+						if err != nil {
+							a.acctMsg = err.Error()
+						} else {
+							a.curUser = u
+							a.curTok = tok
+							a.acctMsg = "注册成功，已登录"
+						}
+					}
+					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return material.Button(th, a.regBtn, "注册").Layout(gtx)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return material.Button(th, a.loginBtn, "登录").Layout(gtx)
+						}),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.Caption(th, a.acctMsg).Layout(gtx)
+				}),
+			)
+		}),
+	)
+}
+
+func (a *App) loadAnime() {
+	recs, _ := a.store().List("anime")
+	a.animeList = recs
+}
+
+func (a *App) renderKB(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	if !a.animeLoaded {
+		a.loadAnime()
+		a.animeLoaded = true
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return material.H5(th, "知识库 · 番剧").Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return material.Editor(th, a.animeTitle, "番剧标题").Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if a.kbAdd.Clicked(gtx) {
+						title := strings.TrimSpace(a.animeTitle.Text())
+						if title != "" {
+							_, _ = a.store().Add("anime", map[string]any{"title": title, "status": "想追"})
+							a.animeTitle.SetText("")
+							a.loadAnime()
+						}
+					}
+					return material.Button(th, a.kbAdd, "＋ 添加").Layout(gtx)
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return (&layout.List{}).Layout(gtx, len(a.animeList), func(gtx layout.Context, i int) layout.Dimensions {
+				r := a.animeList[i]
+				title, _ := r.Data["title"].(string)
+				status, _ := r.Data["status"].(string)
+				return material.Body1(th, "•  "+title+"   ["+status+"]").Layout(gtx)
+			})
 		}),
 	)
 }
