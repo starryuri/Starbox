@@ -96,18 +96,18 @@ var (
 )
 
 type wndClassEx struct {
-	Size        uint32
-	Style       uint32
-	WndProc     uintptr
-	ClsExtra    int32
-	WndExtra    int32
-	HInstance   uintptr
-	HIcon       uintptr
-	HCursor     uintptr
+	Size          uint32
+	Style         uint32
+	WndProc       uintptr
+	ClsExtra      int32
+	WndExtra      int32
+	HInstance     uintptr
+	HIcon         uintptr
+	HCursor       uintptr
 	HbrBackground uintptr
-	MenuName    *uint16
-	ClassName   *uint16
-	HIconSm     uintptr
+	MenuName      *uint16
+	ClassName     *uint16
+	HIconSm       uintptr
 }
 
 var (
@@ -253,12 +253,12 @@ func pickFolder() string {
 
 func createWin32Font(size int, bold bool) uintptr {
 	const (
-		fwNormal    = 400
-		fwBold      = 700
+		fwNormal       = 400
+		fwBold         = 700
 		defaultCharset = 1
-		outDefault  = 0
-		clipDefault = 0
-		antialias   = 5
+		outDefault     = 0
+		clipDefault    = 0
+		antialias      = 5
 	)
 	w := uintptr(fwNormal)
 	if bold {
@@ -403,14 +403,14 @@ func main() {
 
 	clsName := utf16("STARBOXSetupWnd")
 	wc := wndClassEx{
-		Size:      uint32(unsafe.Sizeof(wndClassEx{})),
-		Style:     0,
-		WndProc:   wndProc,
-		HInstance: hInst,
-		HIcon:     curIcon(hInst),
-		HCursor:   0,
+		Size:          uint32(unsafe.Sizeof(wndClassEx{})),
+		Style:         0,
+		WndProc:       wndProc,
+		HInstance:     hInst,
+		HIcon:         curIcon(hInst),
+		HCursor:       0,
 		HbrBackground: uintptr(colorWindow + 1),
-		ClassName: clsName,
+		ClassName:     clsName,
 	}
 	pRegisterClassEx.Call(uintptr(unsafe.Pointer(&wc)))
 
