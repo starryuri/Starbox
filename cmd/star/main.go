@@ -1,7 +1,7 @@
 //go:build windows
 
 // STARBOX — native Win32 desktop app (no WebView2, no Gio). Reliable clicks.
-// Dark theme (navy + cyan accent), owner-drawn sidebar nav, dashboard stat cards.
+// Dark theme (navy + cyan accent), owner-drawn sidebar nav, responsive layout.
 package main
 
 import (
@@ -38,7 +38,7 @@ const (
 	navBase = 100
 	IDTitle = 301
 	IDBody  = 302
-	K_CARD  = 401 // 4 cards: 401..404
+	K_CARD  = 401
 )
 
 const dataDirName = "data"
@@ -56,9 +56,8 @@ const (
 	colSide  = 0x2b1610 // #10162b
 	colAcc   = 0xeed322 // #22d3ee
 	colFg    = 0xf7ece7 // #e7ecf7
-	colMuted = 0xa9b4c8
-	colOnAcc = 0x170e0b // #0b0e17
-	colCard  = 0x362513 // #132536 visibly lighter panel
+	colOnAcc = 0x170e0b
+	colCard  = 0x4a3c20 // #203c4a
 )
 
 var (
@@ -86,13 +85,16 @@ var (
 	pFillRect         = user32.NewProc("FillRect")
 	pDrawText         = user32.NewProc("DrawTextW")
 	pGetDlgCtrlID     = user32.NewProc("GetDlgCtrlID")
+	pGetClientRect    = user32.NewProc("GetClientRect")
+	pMoveWindow       = user32.NewProc("MoveWindow")
 )
 
 var (
 	hwndMain           uintptr
 	fontTitle, fontNav uintptr
-	fontBody, fontCard uintptr
+	fontCard, fontBody uintptr
 	brushBg, brushCard uintptr
+	hBrand, hTag       uintptr
 	hNav               [20]uintptr
 	hCards             [4]uintptr
 	hTitle, hBody      uintptr
@@ -295,6 +297,49 @@ func highlightNav() {
 	}
 }
 
+func moveWin(h uintptr, x, y, w, hh int) {
+	pMoveWindow.Call(h, uintptr(x), uintptr(y), uintptr(w), uintptr(hh), 1)
+}
+
+// relayout positions all controls based on the current client size.
+func relayout() {
+	var rc rect
+	pGetClientRect.Call(hwndMain, uintptr(unsafe.Pointer(&rc)))
+	w, h := int(rc.Right), int(rc.Bottom)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	sidebarW := 280
+	contentX := sidebarW + 30
+	contentW := w - contentX - 30
+	if contentW < 240 {
+		contentW = 240
+	}
+	moveWin(hBrand, 30, 30, sidebarW-50, 42)
+	moveWin(hTag, 30, 86, sidebarW-50, 26)
+	navH := 48
+	for i := range pages {
+		moveWin(hNav[i], 26, 126+i*navH, sidebarW-52, navH-6)
+	}
+	moveWin(hTitle, contentX, 30, contentW, 46)
+	cardGap := 16
+	cardW := (contentW - 3*cardGap) / 4
+	if cardW < 100 {
+		cardW = 100
+	}
+	cardH := 150
+	for i := 0; i < 4; i++ {
+		moveWin(hCards[i], contentX+i*(cardW+cardGap), 96, cardW, cardH)
+	}
+	bodyY := 96 + cardH + 26
+	bodyH := h - bodyY - 30
+	if bodyH < 60 {
+		bodyH = 60
+	}
+	moveWin(hBody, contentX, bodyY, contentW, bodyH)
+	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
 func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintptr {
 	switch msg {
 	case 0x0111: // WM_COMMAND
@@ -317,19 +362,23 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		switch {
 		case id == IDBody:
 			pSetTextColor.Call(wParam, colFg)
-			pSetBkMode.Call(wParam, 0) // OPAQUE
+			pSetBkMode.Call(wParam, 0)
 			pSetBkColor.Call(wParam, colSide)
 			return brushBg
 		case isCard(id):
 			pSetTextColor.Call(wParam, colFg)
-			pSetBkMode.Call(wParam, 0) // OPAQUE
+			pSetBkMode.Call(wParam, 0)
 			pSetBkColor.Call(wParam, colCard)
 			return brushCard
 		default:
 			pSetTextColor.Call(wParam, colFg)
-			pSetBkMode.Call(wParam, 1) // TRANSPARENT
+			pSetBkMode.Call(wParam, 1)
 			return brushBg
 		}
+	case 0x0005: // WM_SIZE
+		relayout()
+		r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
+		return r
 	case 0x0010: // WM_CLOSE
 		pDestroyWindow.Call(hwnd)
 		return 0
@@ -400,39 +449,33 @@ func main() {
 		uintptr(unsafe.Pointer(clsName)),
 		uintptr(unsafe.Pointer(utf16("星匣 STARBOX"))),
 		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 1200, 760,
+		0x80000000, 0x80000000, 1280, 820,
 		0, 0, hInst, 0)
 
-	fontTitle = createWin32Font(24, true)
-	fontNav = createWin32Font(16, false)
-	fontBody = createWin32Font(16, false)
-	fontCard = createWin32Font(18, false)
+	fontTitle = createWin32Font(26, true)
+	fontNav = createWin32Font(18, false)
+	fontCard = createWin32Font(20, false)
+	fontBody = createWin32Font(18, false)
 
-	createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 30, 30, 240, 40, fontTitle)
-	createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 30, 84, 240, 24, fontNav)
-
-	navL, navH := 250, 46
+	hBrand = createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 30, 30, 230, 42, fontTitle)
+	hTag = createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 30, 86, 230, 26, fontNav)
 	for i, p := range pages {
 		label := pageLabels[p]
 		if p == page {
 			label = "● " + label
 		}
-		hNav[i] = createChild("BUTTON", label, bsOwnerDraw, navBase+i, 26, 122+i*navH, navL-50, navH-6, fontNav)
+		hNav[i] = createChild("BUTTON", label, bsOwnerDraw, navBase+i, 26, 126+i*48, 228, 42, fontNav)
 	}
-
-	// Content area
-	ctx, cw := 300, 860
-	hTitle = createChild("STATIC", "", ssLeft, IDTitle, ctx, 30, cw, 40, fontTitle)
-	// stat cards (fill content width)
-	cardW, cardH, gap := (cw-3*16)/4, 130, 16
+	hTitle = createChild("STATIC", "", ssLeft, IDTitle, 310, 30, 900, 46, fontTitle)
 	for i := 0; i < 4; i++ {
-		hCards[i] = createChild("STATIC", "", ssLeft, K_CARD+i, ctx+i*(cardW+gap), 92, cardW, cardH, fontCard)
+		hCards[i] = createChild("STATIC", "", ssLeft, K_CARD+i, 310+i*210, 96, 200, 150, fontCard)
 	}
-	hBody = createChild("STATIC", "", ssLeft, IDBody, ctx, 240, cw, 460, fontBody)
+	hBody = createChild("STATIC", "", ssLeft, IDBody, 310, 280, 900, 480, fontBody)
 	renderPage()
 
 	pShowWindow.Call(hwndMain, 5)
 	pUpdateWindow.Call(hwndMain)
+	relayout()
 
 	var msg msgStruct
 	for {
