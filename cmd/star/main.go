@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/windows"
 
 	"butler/internal/config"
+	"butler/internal/githot"
+	"butler/internal/kb"
 	"butler/internal/monitor"
 	"butler/internal/settings"
 
@@ -31,6 +33,9 @@ const (
 	wsVisible          = 0x10000000
 	ssLeft             = 0x00000000
 	bsOwnerDraw        = 0x0000000B
+	esAutoHScroll      = 0x00000080
+	esPassword         = 0x00000020
+	wsTabStop          = 0x00010000
 )
 
 const (
@@ -39,6 +44,13 @@ const (
 	IDTitle = 301
 	IDBody  = 302
 	K_CARD  = 401
+	IDPlat  = 501 // 4 platform buttons: 501..504
+	IDAcc   = 505
+	IDPass  = 506
+	IDSave  = 507
+	IDReff  = 508
+	IDInfo  = 509
+	IDHint  = 510
 )
 
 const dataDirName = "data"
@@ -90,18 +102,23 @@ var (
 )
 
 var (
-	hwndMain           uintptr
-	fontTitle, fontNav uintptr
-	fontCard, fontBody uintptr
-	brushBg, brushCard uintptr
-	hBrand, hTag       uintptr
-	hNav               [20]uintptr
-	hCards             [4]uintptr
-	hTitle, hBody      uintptr
-	page               string
-	mgr                *monitor.State
-	dataDir            string
-	wndProc            = syscall.NewCallback(wndProcMain)
+	hwndMain            uintptr
+	fontTitle, fontNav  uintptr
+	fontCard, fontBody  uintptr
+	brushBg, brushCard  uintptr
+	hBrand, hTag        uintptr
+	hNav                [20]uintptr
+	hCards              [4]uintptr
+	hTitle, hBody       uintptr
+	st                  *kb.Store
+	curPlat             int
+	hPlat               [4]uintptr
+	hAcc, hPass, hSave  uintptr
+	hReff, hInfo, hHint uintptr
+	page                string
+	mgr                 *monitor.State
+	dataDir             string
+	wndProc             = syscall.NewCallback(wndProcMain)
 )
 
 type wndClassEx struct {
@@ -227,6 +244,53 @@ func boolStr(b bool) string {
 
 func isCard(id uintptr) bool { return id >= K_CARD && id < uintptr(K_CARD+4) }
 
+var platLabels = []string{"GitHub", "CSDN", "Bangumi", "AniList"}
+var bindKeys = map[int]string{0: "github", 1: "csdn", 2: "bgmUser", 3: "anilistUser"}
+
+func loadBind() {
+	recs, _ := st.List("connect")
+	m := map[string]interface{}{}
+	if len(recs) > 0 {
+		m = recs[0].Data
+	}
+	acc, _ := m[bindKeys[curPlat]].(string)
+	pass, _ := m[bindKeys[curPlat]+"_pass"].(string)
+	setText(hAcc, acc)
+	setText(hPass, pass)
+	setText(hHint, "凭据仅存本机")
+}
+
+func saveBind() {
+	recs, _ := st.List("connect")
+	m := map[string]interface{}{}
+	if len(recs) > 0 {
+		m = recs[0].Data
+	}
+	m[bindKeys[curPlat]] = getText(hAcc)
+	m[bindKeys[curPlat]+"_pass"] = getText(hPass)
+	if len(recs) > 0 {
+		_, _ = st.Update("connect", recs[0].ID, m)
+	} else {
+		_, _ = st.Add("connect", m)
+	}
+	setText(hHint, "已保存到本机")
+}
+
+func insightInfo() string {
+	repos, err := githot.Trending(7, "")
+	if err != nil {
+		return "（获取 GitHub 热门失败：" + err.Error() + "）"
+	}
+	if len(repos) == 0 {
+		return "（暂无热门）"
+	}
+	var sb strings.Builder
+	for _, r := range repos {
+		sb.WriteString(fmt.Sprintf("★ %s  (%d★)  %s\n", r.Name, r.Stars, r.Desc))
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
 func updateCards() {
 	var c0, m0, u0, d0 string
 	if c, err := cpu.Percent(0, false); err == nil && len(c) > 0 {
@@ -264,24 +328,43 @@ func diskText() string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
+func boolShow(b bool) uintptr {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func renderPage() {
-	title, body := pageLabels[page], ""
-	if page == "overview" {
-		for i := range hCards {
-			pShowWindow.Call(hCards[i], 1)
-		}
+	title := pageLabels[page]
+	overview := page == "overview"
+	insight := page == "insight"
+	for i := range hCards {
+		pShowWindow.Call(hCards[i], boolShow(overview))
+	}
+	for i := range hPlat {
+		pShowWindow.Call(hPlat[i], boolShow(insight))
+	}
+	pShowWindow.Call(hAcc, boolShow(insight))
+	pShowWindow.Call(hPass, boolShow(insight))
+	pShowWindow.Call(hSave, boolShow(insight))
+	pShowWindow.Call(hReff, boolShow(insight))
+	pShowWindow.Call(hHint, boolShow(insight))
+	pShowWindow.Call(hInfo, boolShow(insight))
+	pShowWindow.Call(hBody, boolShow(!insight))
+
+	var body string
+	switch {
+	case overview:
 		updateCards()
 		body = diskText()
-	} else {
-		for i := range hCards {
-			pShowWindow.Call(hCards[i], 0)
-		}
-		switch page {
-		case "settings":
-			body = "开机自启动: " + boolStr(settings.Load(dataDir).AutoStart) + "\n\n（设置页后续接入）"
-		default:
-			body = "「" + pageLabels[page] + "」页面移植中，将逐个接入后台数据。"
-		}
+	case insight:
+		setText(hInfo, insightInfo())
+		loadBind()
+	case page == "settings":
+		body = "开机自启动: " + boolStr(settings.Load(dataDir).AutoStart) + "\n\n（设置页后续接入）"
+	default:
+		body = "「" + pageLabels[page] + "」页面移植中，将逐个接入后台数据。"
 	}
 	setText(hTitle, title)
 	setText(hBody, body)
@@ -337,6 +420,21 @@ func relayout() {
 		bodyH = 60
 	}
 	moveWin(hBody, contentX, bodyY, contentW, bodyH)
+	// insight controls
+	platGap := 8
+	platW := (contentW - 3*platGap) / 4
+	if platW < 100 {
+		platW = 100
+	}
+	for i := 0; i < 4; i++ {
+		moveWin(hPlat[i], contentX+i*(platW+platGap), 96, platW, 44)
+	}
+	moveWin(hAcc, contentX, 162, 380, 34)
+	moveWin(hPass, contentX+400, 162, 380, 34)
+	moveWin(hSave, contentX+800, 160, 120, 38)
+	moveWin(hReff, contentX, 214, 120, 36)
+	moveWin(hHint, contentX+130, 216, contentW-130, 30)
+	moveWin(hInfo, contentX, 264, contentW, h-264-30)
 	pInvalidateRect.Call(hwndMain, 0, 1)
 }
 
@@ -349,6 +447,19 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			highlightNav()
 			renderPage()
 			pInvalidateRect.Call(hwndMain, 0, 1)
+			return 0
+		}
+		if id >= IDPlat && id < IDPlat+4 {
+			curPlat = int(id - IDPlat)
+			loadBind()
+			return 0
+		}
+		if id == IDSave {
+			saveBind()
+			return 0
+		}
+		if id == IDReff {
+			setText(hInfo, insightInfo())
 			return 0
 		}
 	case 0x002B: // WM_DRAWITEM
@@ -427,6 +538,7 @@ func main() {
 	dataDir = filepath.Join(filepath.Dir(exe), dataDirName)
 	_, _ = config.Load(filepath.Join(filepath.Dir(exe), "config.json"))
 	mgr = monitor.New()
+	st = kb.New(dataDir)
 	page = "overview"
 
 	brushBg, _, _ = pCreateSolidBrush.Call(uintptr(colBg))
@@ -471,6 +583,16 @@ func main() {
 		hCards[i] = createChild("STATIC", "", ssLeft, K_CARD+i, 310+i*210, 96, 200, 150, fontCard)
 	}
 	hBody = createChild("STATIC", "", ssLeft, IDBody, 310, 280, 900, 480, fontBody)
+	// insight page controls
+	for i := range hPlat {
+		hPlat[i] = createChild("BUTTON", platLabels[i], 0, IDPlat+i, 310+i*130, 96, 124, 40, fontNav)
+	}
+	hAcc = createChild("EDIT", "", esAutoHScroll|wsTabStop, IDAcc, 310, 160, 380, 32, fontBody)
+	hPass = createChild("EDIT", "", esAutoHScroll|esPassword|wsTabStop, IDPass, 700, 160, 380, 32, fontBody)
+	hSave = createChild("BUTTON", "保存账号", 0, IDSave, 1092, 158, 120, 36, fontNav)
+	hReff = createChild("BUTTON", "刷新热门", 0, IDReff, 310, 214, 120, 34, fontNav)
+	hHint = createChild("STATIC", "", ssLeft, IDHint, 440, 220, 760, 26, fontNav)
+	hInfo = createChild("STATIC", "", ssLeft, IDInfo, 310, 264, 940, 440, fontBody)
 	renderPage()
 
 	pShowWindow.Call(hwndMain, 5)
