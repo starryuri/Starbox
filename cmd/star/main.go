@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"butler/internal/config"
+	"butler/internal/du"
 	"butler/internal/githot"
 	"butler/internal/kb"
 	"butler/internal/monitor"
@@ -363,11 +364,34 @@ func renderPage() {
 		loadBind()
 	case page == "settings":
 		body = "开机自启动: " + boolStr(settings.Load(dataDir).AutoStart) + "\n\n（设置页后续接入）"
+	case page == "disk":
+		body = dirText()
 	default:
 		body = "「" + pageLabels[page] + "」页面移植中，将逐个接入后台数据。"
 	}
 	setText(hTitle, title)
 	setText(hBody, body)
+}
+
+func dirText() string {
+	var sb strings.Builder
+	sb.WriteString("本机磁盘:\n")
+	if parts, err := disk.Partitions(false); err == nil {
+		for _, p := range parts {
+			if u, err := disk.Usage(p.Mountpoint); err == nil && u.Total > 0 {
+				sb.WriteString(fmt.Sprintf("  %s  %.1f%%  %s / %s\n", p.Mountpoint, u.UsedPercent, humanBytes(u.Used), humanBytes(u.Total)))
+			}
+		}
+	}
+	sb.WriteString("\n目录占用 (C:\\):\n")
+	if items, err := du.Scan("C:\\", 12); err == nil {
+		for _, it := range items {
+			sb.WriteString(fmt.Sprintf("  %s  %s\n", it.Name, humanBytes(uint64(it.Size))))
+		}
+	} else {
+		sb.WriteString("  （无法扫描: " + err.Error() + "）\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func highlightNav() {
