@@ -176,6 +176,7 @@ var (
 	pSelectObject       = gdi32.NewProc("SelectObject")
 	pStretchBlt         = gdi32.NewProc("StretchBlt")
 	pSetStretchBltMode  = gdi32.NewProc("SetStretchBltMode")
+	pBitBlt             = gdi32.NewProc("BitBlt")
 	pSetWindowTheme    = uxtheme.NewProc("SetWindowTheme")
 )
 
@@ -209,6 +210,7 @@ var (
 // --- KB anime card / detail state ---
 var (
 	kbRecs   []kb.Record
+	wheelAccum int
 	kbCards  []kbCard
 	kbScroll int
 	detailID string
@@ -569,7 +571,6 @@ func verifyBind(token string) {
 }
 
 // refreshMyRepos pulls the bound account's repos into the insight text.
-var reposBusy bool
 
 func refreshMyRepos() {
 	if bindToken == "" || reposBusy {
@@ -649,6 +650,7 @@ var (
 	rssText                  string
 	cfg                      *config.Config
 	bindVerifying bool
+	reposBusy      bool
 	bindStatus    string
 	bindToken     string // verified github token (session only)
 	bindLogin     string
@@ -2340,7 +2342,17 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 	case 0x020A: // WM_MOUSEWHEEL
 		if kbCardMode() && detailID == "" && !searchMode {
 			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
-			kbScroll -= delta / 120 * 90
+			wheelAccum += delta
+			step := 0
+			for wheelAccum <= -120 {
+				step += 90
+				wheelAccum += 120
+			}
+			for wheelAccum >= 120 {
+				step -= 90
+				wheelAccum -= 120
+			}
+			kbScroll -= step
 			if kbScroll < 0 {
 				kbScroll = 0
 			}
@@ -2368,16 +2380,32 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		dc, _, _ := pBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		if dc != 0 {
 			w, h := clientSize()
-			// content background
-			fillRectColor(dc, 0, 0, w, h, colBg)
-			// sidebar panel
-			sidebarW := 320
-			if w > sidebarW {
-				fillRectColor(dc, 0, 0, sidebarW, h, colSide)
+			// draw into a memory DC, then blit once — kills repaint flicker
+			mem, _, _ := pCreateCompatibleDC.Call(dc)
+			if mem != 0 {
+				var bi bitmapInfo
+				bi.Size = 40
+				bi.Width = int32(w)
+				bi.Height = int32(-h)
+				bi.Planes = 1
+				bi.BitCount = 32
+				bi.Compression = biRGB
+				var bits *byte
+				bmp, _, _ := pCreateDIBSection.Call(mem, uintptr(unsafe.Pointer(&bi)), dibRGBColors, uintptr(unsafe.Pointer(&bits)), 0, 0)
+				if bmp != 0 && bits != nil {
+					oldBmp, _, _ := pSelectObject.Call(mem, bmp)
+					fillRectColor(mem, 0, 0, w, h, colBg)
+					sidebarW := 320
+					if w > sidebarW {
+						fillRectColor(mem, 0, 0, sidebarW, h, colSide)
+					}
+					paintFragment(mem)
+					pBitBlt.Call(dc, 0, 0, uintptr(w), uintptr(h), mem, 0, 0, srcCopy)
+					pSelectObject.Call(mem, oldBmp)
+					pDeleteObject.Call(bmp)
+				}
+				pDeleteDC.Call(mem)
 			}
-			br, _, _ := pCreateSolidBrush.Call(colBg)
-			pDeleteObject.Call(br)
-			paintFragment(dc)
 			pEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		}
 		return 0
