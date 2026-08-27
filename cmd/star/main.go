@@ -66,6 +66,7 @@ const (
 	IDPass  = 506
 	IDSave  = 507
 	IDReff  = 508
+	IDReffMine = 511
 	IDInfo  = 509
 	IDHint  = 510
 	IDAuto  = 601
@@ -100,6 +101,7 @@ const (
 	wmSearchDone = 0x8007
 	wmRss        = 0x8008
 	wmDetail     = 0x800A
+	wmBindDone      = 0x800B
 )
 
 // DrawText flags
@@ -192,6 +194,7 @@ var (
 	hPlat               [4]uintptr
 	hAcc, hPass, hSave  uintptr
 	hReff, hInfo, hHint uintptr
+	hReffMine           uintptr
 	hAuto, hAutoSave    uintptr
 	kbCol               string
 	hKbTab              [5]uintptr
@@ -512,6 +515,7 @@ var platLabels = []string{"GitHub", "CSDN", "Bangumi", "AniList"}
 var bindKeys = map[int]string{0: "github", 1: "csdn", 2: "bgmUser", 3: "anilistUser"}
 
 func loadBind() {
+	bindStatus = ""
 	recs, _ := st.List("connect")
 	m := map[string]interface{}{}
 	if len(recs) > 0 {
@@ -522,6 +526,69 @@ func loadBind() {
 	setText(hAcc, acc)
 	setText(hPass, pass)
 	setText(hHint, "凭据仅存本机")
+}
+
+// verifyBind checks GitHub credentials via githot.Auth (async) and, on success,
+// stores the token (DPAPI-protected at rest) plus the login name in connect.
+// verifyBind checks GitHub credentials via githot.Auth (async) and, on success,
+// stores the token (DPAPI-protected at rest) plus the login name in connect.
+func verifyBind(token string) {
+	if bindVerifying || token == "" {
+		return
+	}
+	bindVerifying = true
+	bindStatus = "（正在验证 GitHub 凭据…）"
+	setText(hHint, bindStatus)
+	go func() {
+		acc, err := githot.Auth(token)
+		if err != nil {
+			bindStatus = "（验证失败：" + err.Error() + "）"
+			bindVerifying = false
+			pPostMessage.Call(hwndMain, uintptr(wmBindDone), 0, 0)
+			return
+		}
+		bindToken = token
+		bindLogin = acc.Login
+		prot := settings.DPAPIProtect(token)
+		recs, _ := st.List("connect")
+		m := map[string]interface{}{}
+		if len(recs) > 0 {
+			m = recs[0].Data
+		}
+		m["github_token"] = prot
+		m["github_login"] = acc.Login
+		if len(recs) > 0 {
+			_, _ = st.Update("connect", recs[0].ID, m)
+		} else {
+			_, _ = st.Add("connect", m)
+		}
+		bindStatus = "已绑定 @"+acc.Login+"（凭据已加密保存）"
+		bindVerifying = false
+		pPostMessage.Call(hwndMain, uintptr(wmBindDone), 0, 0)
+	}()
+}
+
+// refreshMyRepos pulls the bound account's repos into the insight text.
+var reposBusy bool
+
+func refreshMyRepos() {
+	if bindToken == "" || reposBusy {
+		return
+	}
+	reposBusy = true
+	go func() {
+		repos, err := githot.MyRepos(bindToken)
+		if err == nil && len(repos) > 0 {
+			var sb strings.Builder
+			sb.WriteString("我的仓库（@" + bindLogin + "）:\n")
+			for _, r := range repos {
+				sb.WriteString(fmt.Sprintf("  ★ %-6d %s\n", r.Stars, r.Name))
+			}
+			insText = strings.TrimRight(sb.String(), "\n")
+		}
+		reposBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmInsight), 0, 0)
+	}()
 }
 
 func saveBind() {
@@ -581,6 +648,10 @@ var (
 	rssBusy                  bool
 	rssText                  string
 	cfg                      *config.Config
+	bindVerifying bool
+	bindStatus    string
+	bindToken     string // verified github token (session only)
+	bindLogin     string
 	ovStat                  [4]string
 	ovBody, insText, dskBody string
 )
@@ -2020,6 +2091,7 @@ func relayout() {
 	moveWin(hPass, contentX+480, 182, 460, 42)
 	moveWin(hSave, contentX+960, 180, 140, 46)
 	moveWin(hReff, contentX, 246, 140, 44)
+	moveWin(hReffMine, contentX+150, 246, 140, 44)
 	moveWin(hHint, contentX+150, 248, contentW-150, 36)
 	moveWin(hInfo, contentX, 306, contentW, h-306-34)
 	moveWin(hAuto, contentX, 106, 300, 50)
@@ -2058,6 +2130,7 @@ func renderPage() {
 	pShowWindow.Call(hPass, pBool(insight))
 	pShowWindow.Call(hSave, pBool(insight))
 	pShowWindow.Call(hReff, pBool(insight))
+	pShowWindow.Call(hReffMine, pBool(insight))
 	pShowWindow.Call(hHint, pBool(insight))
 	pShowWindow.Call(hInfo, pBool(insight))
 	pShowWindow.Call(hAuto, pBool(setSet))
@@ -2188,11 +2261,20 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			return 0
 		}
 		if id == IDSave {
-			saveBind()
+			// GitHub tab: verify via API first; other tabs stay local-only saves
+			if curPlat == 0 {
+				verifyBind(getText(hPass))
+			} else {
+				saveBind()
+			}
 			return 0
 		}
 		if id == IDReff {
 			refreshInsight()
+			return 0
+		}
+		if id == IDReffMine {
+			refreshMyRepos()
 			return 0
 		}
 		if id == IDSaveS {
@@ -2335,6 +2417,11 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 	case wmFavWorks:
 		if page == "favs" {
 			pInvalidateRect.Call(hwnd, 0, 1)
+		}
+		return 0
+	case wmBindDone:
+		if page == "insight" {
+			setText(hHint, bindStatus)
 		}
 		return 0
 	case wmDetail:
@@ -2521,6 +2608,7 @@ func main() {
 	hPass = createChild("EDIT", "", esAutoHScroll|esPassword|wsTabStop, IDPass, 700, 160, 380, 32, fontBody)
 	hSave = createChild("BUTTON", "保存账号", 0, IDSave, 1092, 158, 120, 36, fontNav)
 	hReff = createChild("BUTTON", "刷新热门", 0, IDReff, 310, 214, 120, 34, fontNav)
+	hReffMine = createChild("BUTTON", "我的仓库", 0, IDReffMine, 440, 214, 120, 34, fontNav)
 	hHint = createChild("STATIC", "", ssLeft, IDHint, 440, 220, 760, 26, fontNav)
 	hInfo = createChild("STATIC", "", ssLeft, IDInfo, 310, 264, 940, 440, fontBody)
 	// settings page controls
