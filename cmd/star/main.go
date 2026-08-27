@@ -382,6 +382,9 @@ func (a *App) renderSidebar(gtx layout.Context, th *material.Theme) layout.Dimen
 						d := a.navRow(gtx, th, c, pageLabels[p], a.page == p, 15)
 						if c.Clicked(gtx) {
 							a.page = p
+							if a.invoke != nil {
+								a.invoke()
+							}
 						}
 						return d
 					}))
@@ -399,6 +402,9 @@ func (a *App) renderSidebar(gtx layout.Context, th *material.Theme) layout.Dimen
 				d := a.navRow(gtx, th, a.accountBtn, label, a.page == "account", 14)
 				if a.accountBtn.Clicked(gtx) {
 					a.page = "account"
+					if a.invoke != nil {
+						a.invoke()
+					}
 				}
 				return d
 			})
