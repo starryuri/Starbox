@@ -247,15 +247,15 @@ func main() {
 		uintptr(unsafe.Pointer(clsName)),
 		uintptr(unsafe.Pointer(utf16("卸载 STARBOX"))),
 		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 460, 260,
+		0x80000000, 0x80000000, 620, 360,
 		0, 0, hInst, 0)
 
-	hwndFont = createWin32Font(16, false)
-	hMsg = createChild("STATIC", "确定要卸载 STARBOX 吗？", ssLeft, IDMsg, 24, 32, 412, 44)
-	hStatus = createChild("STATIC", "", ssLeft, IDStatus, 24, 90, 412, 40)
-	hUninstallBtn = createChild("BUTTON", "卸载", bsPushButton, IDUninstall, 140, 150, 100, 34)
-	hCancelBtn = createChild("BUTTON", "取消", bsPushButton, IDCancel, 260, 150, 90, 34)
-	hDoneBtn = createChild("BUTTON", "完成", bsPushButton, IDDone, 330, 150, 90, 34)
+	hwndFont = createWin32Font(21, false)
+	hMsg = createChild("STATIC", "确定要卸载 STARBOX 吗？", ssLeft, IDMsg, 24, 34, 572, 52)
+	hStatus = createChild("STATIC", "", ssLeft, IDStatus, 24, 108, 572, 46)
+	hUninstallBtn = createChild("BUTTON", "卸载", bsPushButton, IDUninstall, 180, 200, 130, 44)
+	hCancelBtn = createChild("BUTTON", "取消", bsPushButton, IDCancel, 330, 200, 120, 44)
+	hDoneBtn = createChild("BUTTON", "完成", bsPushButton, IDDone, 470, 200, 120, 44)
 	pShowWindow.Call(hDoneBtn, 0)
 
 	pShowWindow.Call(hwndMain, 5)

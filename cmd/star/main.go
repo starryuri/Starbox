@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -65,9 +66,10 @@ const (
 	IDHint  = 510
 	IDAuto  = 601
 	IDSaveS = 602
-	KBTab   = 701 // 5 tabs: 701..705
-	KBToA   = 706 // add title edit
-	KBAdd   = 707 // add button
+	KBTab    = 701 // 5 tabs: 701..705
+	KBToA    = 706 // add title edit
+	KBAdd    = 707 // add button
+	KBSearch = 708 // search button
 )
 
 func pBool(b bool) uintptr {
@@ -90,6 +92,8 @@ const (
 	wmOverview   = 0x8003
 	wmInsight    = 0x8004
 	wmDisk       = 0x8005
+	wmFavWorks   = 0x8006
+	wmSearchDone = 0x8007
 )
 
 // DrawText flags
@@ -183,6 +187,7 @@ var (
 	kbCol               string
 	hKbTab              [5]uintptr
 	hKbToA, hKbAddBtn   uintptr
+	hKbSearchBtn        uintptr
 	page                string
 	mgr                 *monitor.State
 	dataDir             string
@@ -198,16 +203,28 @@ var (
 	detHits  []detHit
 	coverDir string
 	covers   sync.Map // id -> *covInfo
+	// anime search-and-pick
+	searchMode    bool
+	searchBusy    bool
+	searchQuery   string
+	searchResults []anime.Result
 )
 
 // --- generic themed list state (favs / notify / rules) ---
 var (
-	listRows  []listRow
-	listHits  []detHit
-	listPage  string // "favs" | "notify" | "rules"
-	listAct   bool   // whether an action button (top-right) is shown
-	listActL  string // action label
+	listRows   []listRow
+	listHits   []detHit
+	listPage   string // "favs" | "notify" | "rules"
+	listAct    bool   // whether an action button (top-right) is shown
+	listActL   string // action label
 	listScroll int
+	// favs detail (works view)
+	favDetailID string
+	favEntName  string
+	favEntType  string
+	favEntImage string
+	favWorks    []anime.Media
+	favBusy     bool
 )
 
 type listRow struct {
@@ -721,14 +738,14 @@ func kbCardMode() bool { return page == "kb" && kbCol == "anime" }
 
 func kbGeom() (cx, cw, top, bottom int) {
 	w, h := clientSize()
-	sidebarW := 280
+	sidebarW := 320
 	contentX := sidebarW + 30
 	contentW := w - contentX - 30
-	if contentW < 240 {
-		contentW = 240
+	if contentW < 260 {
+		contentW = 260
 	}
-	top = 216
-	bottom = h - 30
+	top = 240
+	bottom = h - 36
 	return contentX, contentW, top, bottom
 }
 
@@ -747,18 +764,18 @@ func kbs2cards() []kbCard {
 	if len(kbRecs) == 0 || cw <= 0 {
 		return nil
 	}
-	const gap = 16
-	const minW = 150
+	const gap = 18
+	const minW = 200
 	cols := (cw + gap) / (minW + gap)
 	if cols < 1 {
 		cols = 1
 	}
 	cardW := (cw - (cols-1)*gap) / cols
-	if cardW < 90 {
-		cardW = 90
+	if cardW < 120 {
+		cardW = 120
 	}
 	coverH := cardW * 14 / 10
-	titleH := 58
+	titleH := 70
 	cardH := coverH + titleH
 	out := make([]kbCard, 0, len(kbRecs))
 	for i, r := range kbRecs {
@@ -776,6 +793,10 @@ func kbs2cards() []kbCard {
 func paintKBCards(dc uintptr) {
 	cx, cw, top, bottom := kbGeom()
 	fillRectColor(dc, cx, top, cw, bottom-top, colSide)
+	if searchMode {
+		paintSearchResults(dc)
+		return
+	}
 	if len(kbRecs) == 0 {
 		drawTextRect(dc, cx, top, cw, 60, "（暂无条目，输入标题点「＋ 添加」）", fontBody, colDim, dtLeft)
 		return
@@ -796,10 +817,10 @@ func paintKBCards(dc uintptr) {
 			drawTextRect(dc, c.x, c.y+coverH/2-30, c.w, 60, firstRune(c.title), fontTiny, colDim, dtCenter|dtVCenter)
 		}
 		ty := c.y + coverH
-		drawTextRect(dc, c.x+6, ty+4, c.w-12, 34, c.title, fontCard, colFg, dtSingle)
+		drawTextRect(dc, c.x+6, ty+2, c.w-12, 40, c.title, fontCard, colFg, dtSingle)
 		sc := statusColor(c.status)
-		fillRectColor(dc, c.x+6, ty+38, c.w-12, 20, sc)
-		drawTextRect(dc, c.x+6, ty+38, c.w-12, 20, c.status, fontTiny, colOnAcc, dtSingle|dtVCenter)
+		fillRectColor(dc, c.x+6, ty+44, c.w-12, 26, sc)
+		drawTextRect(dc, c.x+6, ty+44, c.w-12, 26, c.status, fontTiny, colOnAcc, dtSingle|dtVCenter)
 	}
 }
 
@@ -857,26 +878,26 @@ func paintKBDetail(dc uintptr) {
 	watched, _ := data["watched"].(string)
 	note, _ := data["note"].(string)
 
-	pad := 16
-	lw := 200
-	lh := 286
+	pad := 20
+	lw := 220
+	lh := 340
 	if ci := getCover(r.ID); ci != nil && ci.loaded {
 		drawStretch(dc, cx+pad, top+pad, lw, lh, ci)
 	} else {
 		fillRectColor(dc, cx+pad, top+pad, lw, lh, colCard2)
 		drawTextRect(dc, cx+pad, top+pad, lw, lh, title, fontCard, colDim, dtCenter|dtVCenter)
 	}
-	ix := cx + pad + lw + 20
-	iw := cw - pad - lw - 20 - pad
-	if iw < 120 {
-		iw = 120
+	ix := cx + pad + lw + 24
+	iw := cw - pad - lw - 24 - pad
+	if iw < 140 {
+		iw = 140
 	}
-	drawTextRect(dc, ix, top+pad, iw, 40, title, fontTitle, colFg, dtWordBreak)
-	sty := top + pad + 52
-	drawTextRect(dc, ix, sty, 60, 30, "状态", fontNav, colDim, dtSingle|dtVCenter)
-	sx := ix + 64
+	drawTextRect(dc, ix, top+pad, iw, 52, title, fontTitle, colFg, dtWordBreak)
+	sty := top + pad + 62
+	drawTextRect(dc, ix, sty, 70, 38, "状态", fontNav, colDim, dtSingle|dtVCenter)
+	sx := ix + 78
 	for _, s := range []string{"想追", "在看", "看过", "搁置"} {
-		w := 76
+		w := 96
 		sel := s == status
 		sc := uintptr(colCard2)
 		tc := uintptr(colFg)
@@ -884,12 +905,12 @@ func paintKBDetail(dc uintptr) {
 			sc = colAcc
 			tc = colOnAcc
 		}
-		fillRectColor(dc, sx, sty, w, 30, sc)
-		drawTextRect(dc, sx, sty, w, 30, s, fontNav, tc, dtSingle|dtVCenter)
-		detHits = append(detHits, detHit{sx, sty, w, 30, "status", s})
-		sx += w + 8
+		fillRectColor(dc, sx, sty, w, 38, sc)
+		drawTextRect(dc, sx, sty, w, 38, s, fontNav, tc, dtSingle|dtVCenter)
+		detHits = append(detHits, detHit{sx, sty, w, 38, "status", s})
+		sx += w + 10
 	}
-	my := sty + 48
+	my := sty + 56
 	meta := "评分 " + fmt.Sprintf("%.1f", rate)
 	if total != "" {
 		meta += "    集数 " + total
@@ -897,18 +918,18 @@ func paintKBDetail(dc uintptr) {
 	if watched != "" {
 		meta += "    已看 " + watched
 	}
-	drawTextRect(dc, ix, my, iw, 30, meta, fontNav, colDim, dtSingle|dtVCenter)
-	ny := my + 44
-	nh := bottom - ny - 70
-	if nh < 40 {
-		nh = 40
+	drawTextRect(dc, ix, my, iw, 38, meta, fontNav, colDim, dtSingle|dtVCenter)
+	ny := my + 52
+	nh := bottom - ny - 96
+	if nh < 50 {
+		nh = 50
 	}
 	if note != "" {
 		drawTextRect(dc, ix, ny, iw, nh, note, fontBody, colFg, dtWordBreak)
 	}
-	by := bottom - 52
-	bw := 120
-	bh := 38
+	by := bottom - 66
+	bw := 140
+	bh := 48
 	// back
 	fillRectColor(dc, cx+pad, by, bw, bh, colCard2)
 	drawTextRect(dc, cx+pad, by, bw, bh, "← 返回", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
@@ -924,7 +945,7 @@ func paintKBDetail(dc uintptr) {
 	drawTextRect(dc, dx, by, bw, bh, "删除", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
 	detHits = append(detHits, detHit{dx, by, bw, bh, "delete", r.ID})
 	if link, _ := data["link"].(string); link != "" {
-		drawTextRect(dc, ix, by+2, iw-10, 34, "链接: "+link, fontTiny, colDim, dtSingle)
+		drawTextRect(dc, ix, by+2, iw-10, 44, "链接: "+link, fontTiny, colDim, dtSingle)
 	}
 }
 
@@ -1062,6 +1083,130 @@ func onKBHit(action, id string) {
 		kbWatchInc(id)
 	case "status":
 		kbSetStatus(detailID, id)
+	case "searchcancel":
+		cancelSearch()
+	case "seadd":
+		if n, err := strconv.Atoi(id); err == nil {
+			addAnimeFromSearch(n)
+		}
+	}
+}
+
+// --- anime search-and-pick ---
+
+func runAnimeSearch() {
+	q := strings.TrimSpace(getText(hKbToA))
+	if q == "" || searchBusy {
+		return
+	}
+	searchBusy = true
+	searchQuery = q
+	searchMode = true
+	searchResults = nil
+	pInvalidateRect.Call(hwndMain, 0, 1)
+	go func() {
+		res, err := anime.Search(q)
+		if err == nil {
+			searchResults = res
+		}
+		for _, r := range res {
+			if r.Cover != "" {
+				ensureCover("sfv"+strconv.Itoa(r.ID), r.Cover)
+			}
+		}
+		searchBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmSearchDone), 0, 0)
+	}()
+}
+
+func cancelSearch() {
+	searchMode = false
+	searchResults = nil
+	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
+func addAnimeFromSearch(idx int) {
+	if idx < 0 || idx >= len(searchResults) {
+		return
+	}
+	r := searchResults[idx]
+	data := map[string]interface{}{
+		"title":      r.Title,
+		"status":     "想追",
+		"anilist_id": strconv.Itoa(r.ID),
+		"cover":      r.Cover,
+		"link":       r.URL,
+		"rate":       r.Score,
+		"air_start":  r.StartDate,
+		"note":       r.Synopsis,
+	}
+	if r.Episodes != nil {
+		data["total"] = *r.Episodes
+	}
+	rec, _ := st.Add("anime", data)
+	if rec.ID != "" && r.Cover != "" {
+		ensureCover(rec.ID, r.Cover)
+	}
+	searchMode = false
+	searchResults = nil
+	setText(hKbToA, "")
+	refreshKB()
+	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
+func paintSearchResults(dc uintptr) {
+	cx, cw, top, bottom := kbGeom()
+	fillRectColor(dc, cx, top, cw, bottom-top, colSide)
+	detHits = nil
+	bw, bh := 150, 46
+	fillRectColor(dc, cx+16, top+16, bw, bh, colCard2)
+	drawTextRect(dc, cx+16, top+16, bw, bh, "✕ 取消搜索", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
+	detHits = append(detHits, detHit{cx + 16, top + 16, bw, bh, "searchcancel", ""})
+	drawTextRect(dc, cx+16+bw+16, top+16, cw-bw-16-32, bh, "搜索: "+searchQuery, fontTitle, colFg, dtSingle|dtVCenter)
+	gy := top + 80
+	if searchBusy {
+		drawTextRect(dc, cx+16, gy, cw-32, 40, "（正在搜索…）", fontBody, colDim, dtLeft)
+		return
+	}
+	if len(searchResults) == 0 {
+		drawTextRect(dc, cx+16, gy, cw-32, 40, "（未找到结果，试试英文名）", fontBody, colDim, dtLeft)
+		return
+	}
+	const gap = 16
+	colW := 180
+	cols := (cw - 32 + gap) / (colW + gap)
+	if cols < 1 {
+		cols = 1
+	}
+	wW := (cw - 32 - (cols-1)*gap) / cols
+	if wW < 100 {
+		wW = 100
+	}
+	coverH := wW * 14 / 10
+	cardH := coverH + 68
+	for i, r := range searchResults {
+		col := i % cols
+		row := i / cols
+		x := cx + 16 + col*(wW+gap)
+		y := gy + row*(cardH+gap)
+		if y+cardH > bottom {
+			break
+		}
+		fillRectColor(dc, x, y, wW, cardH, colCard)
+		ci := getCover("sfv" + strconv.Itoa(r.ID))
+		if ci != nil && ci.loaded {
+			drawStretch(dc, x, y, wW, coverH, ci)
+		} else {
+			fillRectColor(dc, x, y, wW, coverH, colCard2)
+			drawTextRect(dc, x, y+coverH/2-24, wW, 48, r.Title, fontTiny, colDim, dtCenter|dtVCenter)
+		}
+		meta := fmt.Sprintf("%.1f", r.Score)
+		if r.Year > 0 {
+			meta += " · " + fmt.Sprintf("%d", r.Year)
+		}
+		drawTextRect(dc, x+6, y+coverH+2, wW-12, 28, meta, fontTiny, colAcc, dtSingle)
+		drawTextRect(dc, x+6, y+coverH+30, wW-12, 36, r.Title, fontTiny, colFg, dtWordBreak)
+		detHits = append(detHits, detHit{x, y, wW, cardH, "seadd", strconv.Itoa(i)})
 	}
 }
 
@@ -1130,6 +1275,10 @@ func refreshList() {
 func paintListPage(dc uintptr) {
 	cx, cw, top, bottom := kbGeom()
 	fillRectColor(dc, cx, top, cw, bottom-top, colSide)
+	if listPage == "favs" && favDetailID != "" {
+		paintFavWorks(dc)
+		return
+	}
 	listHits = listHits[:0]
 	// toolbar row (action button top-right)
 	hy := top + 8
@@ -1140,9 +1289,9 @@ func paintListPage(dc uintptr) {
 		drawTextRect(dc, ax, hy, aw, ah, listActL, fontNav, colOnAcc, dtSingle|dtVCenter|dtCenter)
 		listHits = append(listHits, detHit{ax, hy, aw, ah, "listaction", ""})
 	}
-	ry := top + 54
-	rh := 72
-	gap := 10
+	ry := top + 60
+	rh := 88
+	gap := 12
 	if len(listRows) == 0 {
 		msg := "（暂无条目）"
 		switch listPage {
@@ -1228,7 +1377,131 @@ func onListHit(action, id string) {
 			}
 			refreshList()
 			pInvalidateRect.Call(hwndMain, 0, 1)
+		} else if listPage == "favs" {
+			favDetailID = id
+			favWorks = nil
+			favEntName, favEntType, favEntImage = "", "", ""
+			loadFavWorks()
+			pInvalidateRect.Call(hwndMain, 0, 1)
 		}
+	case "favback":
+		favDetailID = ""
+		pInvalidateRect.Call(hwndMain, 0, 1)
+	case "favdel":
+		favDelete(id)
+	}
+}
+
+// --- favorites works view ---
+
+func favAlID(rec *kb.Record) int {
+	switch v := rec.Data["al_id"].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
+func loadFavWorks() {
+	if favBusy {
+		return
+	}
+	rec := findRec("favs", favDetailID)
+	if rec == nil {
+		return
+	}
+	favBusy = true
+	favEntName, _ = rec.Data["name"].(string)
+	favEntType, _ = rec.Data["type"].(string)
+	if fp, ok := rec.Data["image"].(string); ok {
+		favEntImage = fp
+	}
+	go func() {
+		id := favAlID(rec)
+		if favEntType == "cv" || favEntType == "staff" {
+			if w, err := anime.GetStaff(id); err == nil {
+				favEntImage = w.Image
+				favWorks = w.Media
+			}
+		} else {
+			if w, err := anime.GetStudio(id); err == nil {
+				favEntImage = w.Image
+				favWorks = w.Media
+			}
+		}
+		for _, m := range favWorks {
+			if m.Cover != "" {
+				ensureCover("fvw"+strconv.Itoa(m.ID), m.Cover)
+			}
+		}
+		favBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmFavWorks), 0, 0)
+	}()
+}
+
+func favDelete(id string) {
+	_ = st.Delete("favs", id)
+	favDetailID = ""
+	refreshList()
+	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
+func paintFavWorks(dc uintptr) {
+	cx, cw, top, bottom := kbGeom()
+	fillRectColor(dc, cx, top, cw, bottom-top, colSide)
+	listHits = nil
+	bw, bh := 110, 44
+	fillRectColor(dc, cx+16, top+16, bw, bh, colCard2)
+	drawTextRect(dc, cx+16, top+16, bw, bh, "← 返回", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
+	listHits = append(listHits, detHit{cx + 16, top + 16, bw, bh, "favback", ""})
+	dw := 110
+	dx := cx + cw - 16 - dw
+	fillRectColor(dc, dx, top+16, dw, bh, colRed)
+	drawTextRect(dc, dx, top+16, dw, bh, "删除", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
+	listHits = append(listHits, detHit{dx, top + 16, dw, bh, "favdel", favDetailID})
+	drawTextRect(dc, cx+16+bw+12, top+16, cw-bw-dw-12-32, bh, favEntName, fontTitle, colFg, dtSingle|dtVCenter)
+	gy := top + 76
+	drawTextRect(dc, cx+16, gy, cw-32, 30, "作品 ("+fmt.Sprintf("%d", len(favWorks))+")", fontNav, colDim, dtSingle)
+	gy += 40
+	if favBusy {
+		drawTextRect(dc, cx+16, gy, cw-32, 40, "（正在获取作品…）", fontBody, colDim, dtLeft)
+		return
+	}
+	if len(favWorks) == 0 {
+		drawTextRect(dc, cx+16, gy, cw-32, 40, "（暂无作品数据）", fontBody, colDim, dtLeft)
+		return
+	}
+	const gap = 16
+	colW := 150
+	cols := (cw - 32 + gap) / (colW + gap)
+	if cols < 1 {
+		cols = 1
+	}
+	wW := (cw - 32 - (cols-1)*gap) / cols
+	if wW < 90 {
+		wW = 90
+	}
+	coverH := wW * 14 / 10
+	cardH := coverH + 54
+	for i, m := range favWorks {
+		col := i % cols
+		row := i / cols
+		x := cx + 16 + col*(wW+gap)
+		y := gy + row*(cardH+gap)
+		if y+cardH > bottom {
+			break
+		}
+		fillRectColor(dc, x, y, wW, cardH, colCard)
+		ci := getCover("fvw" + strconv.Itoa(m.ID))
+		if ci != nil && ci.loaded {
+			drawStretch(dc, x, y, wW, coverH, ci)
+		} else {
+			fillRectColor(dc, x, y, wW, coverH, colCard2)
+			drawTextRect(dc, x, y+coverH/2-24, wW, 48, m.Title, fontTiny, colDim, dtCenter|dtVCenter)
+		}
+		drawTextRect(dc, x+6, y+coverH+2, wW-12, 52, m.Title, fontTiny, colFg, dtWordBreak)
 	}
 }
 
@@ -1254,30 +1527,30 @@ func relayout() {
 	if w <= 0 || h <= 0 {
 		return
 	}
-	sidebarW := 280
+	sidebarW := 320
 	contentX := sidebarW + 30
 	contentW := w - contentX - 30
-	if contentW < 240 {
-		contentW = 240
+	if contentW < 260 {
+		contentW = 260
 	}
-	moveWin(hBrand, 30, 30, sidebarW-50, 42)
-	moveWin(hTag, 30, 86, sidebarW-50, 26)
-	navH := 48
+	moveWin(hBrand, 30, 30, sidebarW-50, 52)
+	moveWin(hTag, 30, 94, sidebarW-50, 32)
+	navH := 58
 	for i := range pages {
-		moveWin(hNav[i], 26, 126+i*navH, sidebarW-52, navH-6)
+		moveWin(hNav[i], 26, 132+i*navH, sidebarW-54, navH-6)
 	}
-	moveWin(hTitle, contentX, 30, contentW, 46)
-	cardGap := 16
+	moveWin(hTitle, contentX, 30, contentW, 54)
+	cardGap := 18
 	cardW := (contentW - 3*cardGap) / 4
-	if cardW < 100 {
-		cardW = 100
+	if cardW < 120 {
+		cardW = 120
 	}
-	cardH := 150
+	cardH := 185
 	for i := 0; i < 4; i++ {
-		moveWin(hCards[i], contentX+i*(cardW+cardGap), 96, cardW, cardH)
+		moveWin(hCards[i], contentX+i*(cardW+cardGap), 106, cardW, cardH)
 	}
-	bodyY := 96 + cardH + 26
-	bodyH := h - bodyY - 30
+	bodyY := 106 + cardH + 30
+	bodyH := h - bodyY - 34
 	if bodyH < 60 {
 		bodyH = 60
 	}
@@ -1285,30 +1558,31 @@ func relayout() {
 	// insight controls
 	platGap := 8
 	platW := (contentW - 3*platGap) / 4
-	if platW < 100 {
-		platW = 100
+	if platW < 120 {
+		platW = 120
 	}
 	for i := 0; i < 4; i++ {
-		moveWin(hPlat[i], contentX+i*(platW+platGap), 96, platW, 44)
+		moveWin(hPlat[i], contentX+i*(platW+platGap), 106, platW, 52)
 	}
-	moveWin(hAcc, contentX, 162, 380, 34)
-	moveWin(hPass, contentX+400, 162, 380, 34)
-	moveWin(hSave, contentX+800, 160, 120, 38)
-	moveWin(hReff, contentX, 214, 120, 36)
-	moveWin(hHint, contentX+130, 216, contentW-130, 30)
-	moveWin(hInfo, contentX, 264, contentW, h-264-30)
-	moveWin(hAuto, contentX, 96, 240, 40)
-	moveWin(hAutoSave, contentX+250, 94, 110, 42)
+	moveWin(hAcc, contentX, 182, 460, 42)
+	moveWin(hPass, contentX+480, 182, 460, 42)
+	moveWin(hSave, contentX+960, 180, 140, 46)
+	moveWin(hReff, contentX, 246, 140, 44)
+	moveWin(hHint, contentX+150, 248, contentW-150, 36)
+	moveWin(hInfo, contentX, 306, contentW, h-306-34)
+	moveWin(hAuto, contentX, 106, 300, 50)
+	moveWin(hAutoSave, contentX+310, 104, 130, 52)
 	kbgap := 8
 	kbw := (contentW - 4*kbgap) / 5
-	if kbw < 90 {
-		kbw = 90
+	if kbw < 110 {
+		kbw = 110
 	}
 	for i := range kbCols {
-		moveWin(hKbTab[i], contentX+i*(kbw+kbgap), 96, kbw, 44)
+		moveWin(hKbTab[i], contentX+i*(kbw+kbgap), 106, kbw, 52)
 	}
-	moveWin(hKbToA, contentX, 162, 460, 36)
-	moveWin(hKbAddBtn, contentX+470, 158, 110, 40)
+	moveWin(hKbToA, contentX, 182, 560, 44)
+	moveWin(hKbAddBtn, contentX+570, 178, 150, 48)
+	moveWin(hKbSearchBtn, contentX+730, 178, 180, 48)
 	kbScroll = 0
 	if kbCardMode() {
 		refreshKB()
@@ -1341,6 +1615,7 @@ func renderPage() {
 	}
 	pShowWindow.Call(hKbToA, pBool(kbon))
 	pShowWindow.Call(hKbAddBtn, pBool(kbon))
+	pShowWindow.Call(hKbSearchBtn, pBool(kbon))
 
 	cm := kbCardMode()
 	lm := listMode()
@@ -1373,6 +1648,7 @@ func renderPage() {
 	case lm:
 		listPage = page
 		listScroll = 0
+		favDetailID = ""
 		refreshList()
 		pInvalidateRect.Call(hwndMain, 0, 1)
 	default:
@@ -1394,6 +1670,14 @@ func mouseXY(lParam uintptr) (int, int) {
 
 func hitTestKB(x, y int) string {
 	if !kbCardMode() {
+		return ""
+	}
+	if searchMode {
+		for _, h := range detHits {
+			if x >= h.x && x < h.x+h.w && y >= h.y && y < h.y+h.h {
+				return h.action + "|" + h.id
+			}
+		}
 		return ""
 	}
 	if detailID != "" {
@@ -1434,6 +1718,8 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		if id >= navBase && id < uintptr(navBase+len(pages)) {
 			page = pages[id-navBase]
 			detailID = ""
+			favDetailID = ""
+			searchMode = false
 			highlightNav()
 			renderPage()
 			pInvalidateRect.Call(hwndMain, 0, 1)
@@ -1470,6 +1756,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			kbCol = kbCols[id-KBTab]
 			detailID = ""
 			kbScroll = 0
+			searchMode = false
 			if kbCardMode() {
 				refreshKB()
 				pInvalidateRect.Call(hwndMain, 0, 1)
@@ -1480,6 +1767,10 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		}
 		if id == KBAdd {
 			kbAdd()
+			return 0
+		}
+		if id == KBSearch {
+			runAnimeSearch()
 			return 0
 		}
 	case 0x0202: // WM_LBUTTONUP
@@ -1535,7 +1826,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			// content background
 			fillRectColor(dc, 0, 0, w, h, colBg)
 			// sidebar panel
-			sidebarW := 288
+			sidebarW := 320
 			if w > sidebarW {
 				fillRectColor(dc, 0, 0, sidebarW, h, colSide)
 			}
@@ -1566,6 +1857,16 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 	case wmDisk:
 		if page == "disk" {
 			setText(hBody, dskBody)
+		}
+		return 0
+	case wmFavWorks:
+		if page == "favs" {
+			pInvalidateRect.Call(hwnd, 0, 1)
+		}
+		return 0
+	case wmSearchDone:
+		if kbCardMode() {
+			pInvalidateRect.Call(hwnd, 0, 1)
 		}
 		return 0
 	case 0x002B: // WM_DRAWITEM
@@ -1654,6 +1955,9 @@ func drawItem(diPtr uintptr) uintptr {
 	case id == KBAdd:
 		drawBtn(di, colAcc, colOnAcc)
 		return 1
+	case id == KBSearch:
+		drawBtn(di, colAcc, colOnAcc)
+		return 1
 	case id >= IDPlat && id < IDPlat+4:
 		fill := uintptr(colCard2)
 		tc := uintptr(colFg)
@@ -1703,14 +2007,14 @@ func main() {
 		uintptr(unsafe.Pointer(clsName)),
 		uintptr(unsafe.Pointer(utf16("星匣 STARBOX"))),
 		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 1280, 820,
+		0x80000000, 0x80000000, 1560, 960,
 		0, 0, hInst, 0)
 
-	fontTitle = createWin32Font(26, true)
-	fontNav = createWin32Font(18, false)
-	fontCard = createWin32Font(20, false)
-	fontBody = createWin32Font(18, false)
-	fontTiny = createWin32Font(15, false)
+	fontTitle = createWin32Font(34, true)
+	fontNav = createWin32Font(22, false)
+	fontCard = createWin32Font(26, false)
+	fontBody = createWin32Font(22, false)
+	fontTiny = createWin32Font(17, false)
 
 	hBrand = createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 30, 30, 230, 42, fontTitle)
 	hTag = createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 30, 86, 230, 26, fontNav)
@@ -1746,6 +2050,7 @@ func main() {
 	}
 	hKbToA = createChild("EDIT", "", esAutoHScroll|wsTabStop, KBToA, 310, 160, 460, 36, fontBody)
 	hKbAddBtn = createChild("BUTTON", "＋ 添加", bsOwnerDraw, KBAdd, 780, 158, 110, 40, fontNav)
+	hKbSearchBtn = createChild("BUTTON", "搜索并添加", bsOwnerDraw, KBSearch, 900, 158, 150, 40, fontNav)
 	// dark-theme the edit boxes (disable visual styles so WM_CTLCOLOREDIT applies)
 	empty := utf16("")
 	pSetWindowTheme.Call(hKbToA, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
@@ -1756,6 +2061,7 @@ func main() {
 	pShowWindow.Call(hwndMain, 5)
 	pUpdateWindow.Call(hwndMain)
 	relayout()
+
 
 	var msg msgStruct
 	for {

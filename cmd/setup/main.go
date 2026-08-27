@@ -405,28 +405,28 @@ func main() {
 		uintptr(unsafe.Pointer(clsName)),
 		uintptr(unsafe.Pointer(utf16("星匣 STARBOX 安装器"))),
 		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 560, 470, // CW_USEDEFAULT
+		0x80000000, 0x80000000, 720, 600, // CW_USEDEFAULT
 		0, 0, hInst, 0)
 
-	hwndFont = createWin32Font(16, false)
+	hwndFont = createWin32Font(21, false)
 	// Title static
-	hMsgStatic = createChild("STATIC", "安装 STARBOX", ssLeft, IDMsgStatic, 24, 30, 512, 24)
+	hMsgStatic = createChild("STATIC", "安装 STARBOX", ssLeft, IDMsgStatic, 24, 34, 672, 30)
 	// Install dir row
-	createChild("STATIC", "安装位置:", ssLeft, 0, 24, 84, 80, 20)
-	hDirEdit = createChild("EDIT", defaultDir(), wsTabStop, IDDirEdit, 104, 80, 300, 26)
-	hBrowseBtn = createChild("BUTTON", "浏览…", bsPushButton, IDBrowse, 414, 79, 92, 28)
+	createChild("STATIC", "安装位置:", ssLeft, 0, 24, 96, 100, 26)
+	hDirEdit = createChild("EDIT", defaultDir(), wsTabStop, IDDirEdit, 124, 92, 380, 34)
+	hBrowseBtn = createChild("BUTTON", "浏览…", bsPushButton, IDBrowse, 514, 90, 110, 36)
 	// Options
-	hSMChk = createChild("BUTTON", "创建开始菜单快捷方式", bsAutoCheckBox, IDSMCheck, 24, 130, 300, 24)
+	hSMChk = createChild("BUTTON", "创建开始菜单快捷方式", bsAutoCheckBox, IDSMCheck, 24, 152, 420, 30)
 	pSendMessage.Call(hSMChk, 0x00F1 /*BM_SETCHECK*/, 1, 0)
-	hDeskChk = createChild("BUTTON", "创建桌面快捷方式", bsAutoCheckBox, IDDesktopCh, 24, 160, 300, 24)
+	hDeskChk = createChild("BUTTON", "创建桌面快捷方式", bsAutoCheckBox, IDDesktopCh, 24, 188, 420, 30)
 	pSendMessage.Call(hDeskChk, 0x00F1, 1, 0)
 	// Install button
-	hInstallBtn = createChild("BUTTON", "安装", bsPushButton, IDInstall, 24, 210, 120, 34)
+	hInstallBtn = createChild("BUTTON", "安装", bsPushButton, IDInstall, 24, 252, 150, 44)
 	// Status
-	hStatus = createChild("STATIC", "", ssLeft, IDStatus, 24, 260, 512, 40)
+	hStatus = createChild("STATIC", "", ssLeft, IDStatus, 24, 324, 672, 48)
 	// Done controls (hidden initially)
-	hRunBtn = createChild("BUTTON", "立即运行 STARBOX", bsPushButton, IDRun, 130, 210, 150, 34)
-	hDoneBtn = createChild("BUTTON", "完成", bsPushButton, IDDone, 300, 210, 90, 34)
+	hRunBtn = createChild("BUTTON", "立即运行 STARBOX", bsPushButton, IDRun, 24, 252, 200, 44)
+	hDoneBtn = createChild("BUTTON", "完成", bsPushButton, IDDone, 240, 252, 120, 44)
 	pShowWindow.Call(hRunBtn, 0)
 	pShowWindow.Call(hDoneBtn, 0)
 
