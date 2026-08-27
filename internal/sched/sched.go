@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -114,6 +116,9 @@ func runExec(ctx context.Context, t config.Task, st *monitor.State) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, t.Command, t.Args...)
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	}
 	cmd.Env = mergeEnv(t.Env)
 	var out bytes.Buffer
 	cmd.Stdout = &out
