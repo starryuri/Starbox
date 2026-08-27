@@ -55,6 +55,9 @@ const (
 	IDHint  = 510
 	IDAuto  = 601
 	IDSaveS = 602
+	KBTab   = 701 // 5 tabs: 701..705
+	KBToA   = 706 // add title edit
+	KBAdd   = 707 // add button
 )
 
 const dataDirName = "data"
@@ -120,6 +123,9 @@ var (
 	hAcc, hPass, hSave  uintptr
 	hReff, hInfo, hHint uintptr
 	hAuto, hAutoSave    uintptr
+	kbCol               string
+	hKbTab              [5]uintptr
+	hKbToA, hKbAddBtn   uintptr
 	page                string
 	mgr                 *monitor.State
 	dataDir             string
@@ -359,6 +365,12 @@ func renderPage() {
 	setSet := page == "settings"
 	pShowWindow.Call(hAuto, boolShow(setSet))
 	pShowWindow.Call(hAutoSave, boolShow(setSet))
+	kbon := page == "kb"
+	for i := range kbCols {
+		pShowWindow.Call(hKbTab[i], boolShow(kbon))
+	}
+	pShowWindow.Call(hKbToA, boolShow(kbon))
+	pShowWindow.Call(hKbAddBtn, boolShow(kbon))
 	pShowWindow.Call(hBody, boolShow(!insight && !setSet))
 
 	var body string
@@ -372,6 +384,8 @@ func renderPage() {
 	case page == "settings":
 		pSendMessage.Call(hAuto, 0x00F1, boolShow(settings.Load(dataDir).AutoStart), 0) // BM_SETCHECK
 		body = "设置：\n\n（设置页其余选项后续接入）"
+	case page == "kb":
+		body = kbText()
 	case page == "disk":
 		body = dirText()
 	default:
@@ -400,6 +414,47 @@ func dirText() string {
 		sb.WriteString("  （无法扫描: " + err.Error() + "）\n")
 	}
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+var kbCols = []string{"anime", "books", "study", "games", "notes"}
+var kbColLabels = map[string]string{"anime": "番剧", "books": "书库", "study": "学习", "games": "游戏", "notes": "笔记"}
+var kbSecField = map[string]string{"anime": "status", "books": "author", "study": "status", "games": "platform", "notes": "tags"}
+
+func kbText() string {
+	recs, _ := st.List(kbCol)
+	if len(recs) == 0 {
+		return "（暂无条目，输入标题添加）"
+	}
+	var sb strings.Builder
+	for _, r := range recs {
+		title, _ := r.Data["title"].(string)
+		sec, _ := r.Data[kbSecField[kbCol]].(string)
+		line := "• " + title
+		if sec != "" {
+			line += "  [" + sec + "]"
+		}
+		sb.WriteString(line + "\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func kbAdd() {
+	title := strings.TrimSpace(getText(hKbToA))
+	if title == "" {
+		return
+	}
+	data := map[string]interface{}{"title": title}
+	switch kbCol {
+	case "anime":
+		data["status"] = "想追"
+	case "study":
+		data["status"] = "规划中"
+	case "games":
+		data["status"] = "想玩"
+	}
+	_, _ = st.Add(kbCol, data)
+	setText(hKbToA, "")
+	setText(hBody, kbText())
 }
 
 func highlightNav() {
@@ -469,6 +524,16 @@ func relayout() {
 	moveWin(hInfo, contentX, 264, contentW, h-264-30)
 	moveWin(hAuto, contentX, 96, 240, 40)
 	moveWin(hAutoSave, contentX+250, 94, 110, 42)
+	kbgap := 8
+	kbw := (contentW - 4*kbgap) / 5
+	if kbw < 90 {
+		kbw = 90
+	}
+	for i := range kbCols {
+		moveWin(hKbTab[i], contentX+i*(kbw+kbgap), 96, kbw, 44)
+	}
+	moveWin(hKbToA, contentX, 162, 460, 36)
+	moveWin(hKbAddBtn, contentX+470, 158, 110, 40)
 	pInvalidateRect.Call(hwndMain, 0, 1)
 }
 
@@ -508,6 +573,15 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			_ = settings.SetAutoStart(st.AutoStart, exe)
 			_ = settings.Save(dataDir, st)
 			pInvalidateRect.Call(hwndMain, 0, 1)
+			return 0
+		}
+		if id >= KBTab && id < uintptr(KBTab+5) {
+			kbCol = kbCols[id-KBTab]
+			setText(hBody, kbText())
+			return 0
+		}
+		if id == KBAdd {
+			kbAdd()
 			return 0
 		}
 	case 0x002B: // WM_DRAWITEM
@@ -644,6 +718,13 @@ func main() {
 	// settings page controls
 	hAuto = createChild("BUTTON", "开机自启动", bsAutoCheckBox, IDAuto, 310, 120, 220, 40, fontNav)
 	hAutoSave = createChild("BUTTON", "保存", 0, IDSaveS, 540, 118, 110, 40, fontNav)
+	// kb page controls
+	kbCol = "anime"
+	for i := range kbCols {
+		hKbTab[i] = createChild("BUTTON", kbColLabels[kbCols[i]], 0, KBTab+i, 310+i*120, 96, 116, 40, fontNav)
+	}
+	hKbToA = createChild("EDIT", "", esAutoHScroll|wsTabStop, KBToA, 310, 160, 460, 36, fontBody)
+	hKbAddBtn = createChild("BUTTON", "＋ 添加", 0, KBAdd, 780, 158, 110, 40, fontNav)
 	renderPage()
 
 	pShowWindow.Call(hwndMain, 5)
