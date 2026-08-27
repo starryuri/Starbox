@@ -7,6 +7,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"unsafe"
 
@@ -173,7 +174,7 @@ func highlightNav() {
 
 func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintptr {
 	switch msg {
-	case 0x0100: // WM_COMMAND
+	case 0x0111: // WM_COMMAND
 		id := uintptr(0xFFFF) & wParam
 		if id >= navBase && id < uintptr(navBase+len(pages)) {
 			page = pages[id-navBase]
@@ -197,6 +198,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 }
 
 func main() {
+	runtime.LockOSThread()
 	user32.NewProc("SetProcessDPIAware").Call()
 	mod, _, _ := kernel32.NewProc("GetModuleHandleW").Call(0)
 	hInst := mod

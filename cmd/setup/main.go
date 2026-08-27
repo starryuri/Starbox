@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -328,7 +329,7 @@ func doInstall() {
 
 func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintptr {
 	switch msg {
-	case 0x0100: // WM_COMMAND
+	case 0x0111: // WM_COMMAND
 		id := uintptr(0xFFFF) & wParam
 		switch id {
 		case IDBrowse:
@@ -395,6 +396,7 @@ func curIcon(hInst uintptr) uintptr {
 }
 
 func main() {
+	runtime.LockOSThread()
 	_, _, _ = user32.NewProc("SetProcessDPIAware").Call()
 
 	// Get instance/module handle.

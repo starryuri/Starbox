@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"unsafe"
 
@@ -198,7 +199,7 @@ func curIcon(hInst uintptr) uintptr {
 
 func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintptr {
 	switch msg {
-	case 0x0100: // WM_COMMAND
+	case 0x0111: // WM_COMMAND
 		id := uintptr(0xFFFF) & wParam
 		switch id {
 		case IDUninstall:
@@ -223,6 +224,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 }
 
 func main() {
+	runtime.LockOSThread()
 	_, _, _ = user32.NewProc("SetProcessDPIAware").Call()
 
 	mod, _, _ := kernel32.NewProc("GetModuleHandleW").Call(0)
