@@ -99,6 +99,7 @@ const (
 	wmFavWorks   = 0x8006
 	wmSearchDone = 0x8007
 	wmRss        = 0x8008
+	wmDetail     = 0x800A
 )
 
 // DrawText flags
@@ -213,6 +214,9 @@ var (
 	covers   sync.Map // id -> *covInfo
 	// anime search-and-pick
 	searchMode    bool
+	detailBusy    bool
+	detailLoading string // record id being enriched
+	detailInfo    *anime.Detail
 	searchBusy    bool
 	searchQuery   string
 	searchResults []anime.Result
@@ -1243,6 +1247,62 @@ func paintKBDetail(dc uintptr) {
 	if note != "" {
 		drawTextRect(dc, ix, ny, iw, nh, note, fontBody, colFg, dtWordBreak)
 	}
+	// studios + main cast, each with a clickable favorite dot
+	if detailInfo != nil && detailLoading != r.ID {
+		if len(detailInfo.Studios) > 0 {
+			sy := sty + 56
+			drawTextRect(dc, ix, sy, 70, 30, "制作", fontNav, colDim, dtSingle|dtVCenter)
+			sxx := ix + 78
+			for _, s := range detailInfo.Studios {
+				if sxx > cx+cw-120 {
+					break
+				}
+				faved := favExists(s.Name)
+				sc := uintptr(colCard2)
+				if faved {
+					sc = colAcc
+				}
+				fillRectColor(dc, sxx, sy, 30, 30, sc)
+				drawTextRect(dc, sxx, sy, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
+				detHits = append(detHits, detHit{sxx, sy, 30, 30, "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
+				drawTextRect(dc, sxx+36, sy, 160, 30, s.Name, fontBody, colFg, dtSingle|dtVCenter)
+				sxx += 200
+			}
+		}
+		if len(detailInfo.Characters) > 0 {
+			cy2 := sty + 96
+			drawTextRect(dc, ix, cy2, 70, 30, "声优", fontNav, colDim, dtSingle|dtVCenter)
+			cxx := ix + 78
+			rows := 0
+			line := 0
+			for _, ch := range detailInfo.Characters {
+				if len(ch.VAs) == 0 {
+					continue
+				}
+				va := ch.VAs[0]
+				faved := favExists(va.Name)
+				sc := uintptr(colCard2)
+				if faved {
+					sc = colAcc
+				}
+				px := cxx + line*170
+				if px+160 > cx+cw-20 {
+					line = 0
+					rows++
+					px = cxx
+				}
+				py := cy2 + rows*34
+				fillRectColor(dc, px, py, 30, 30, sc)
+				drawTextRect(dc, px, py, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
+				detHits = append(detHits, detHit{px, py, 30, 30, "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
+				drawTextRect(dc, px+36, py, 130, 30, va.Name, fontBody, colFg, dtSingle|dtVCenter)
+				line++
+				if rows >= 4 {
+					break
+				}
+			}
+		}
+	}
 	by := bottom - 66
 	bw := 140
 	bh := 48
@@ -1394,11 +1454,65 @@ func bgmCoverAsync(id, title string) {
 	}()
 }
 
+// fetchDetailAsync pulls studios/cast from AniList for the record being viewed.
+func fetchDetailAsync(id string) {
+	rec := recByID(id)
+	if rec == nil {
+		return
+	}
+	v, _ := rec.Data["anilist_id"].(string)
+	if v == "" {
+		return // only AniList-backed records carry full cast info
+	}
+	alID, _ := strconv.Atoi(v)
+	if alID == 0 || detailBusy {
+		return
+	}
+	detailBusy = true
+	detailLoading = id
+	go func() {
+		d, err := anime.GetDetail(alID)
+		if err == nil && detailLoading == id {
+			detailInfo = &d
+		}
+		detailBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmDetail), 0, 0)
+	}()
+}
+
+// favExists reports whether this studio/cv is already favorited.
+func favExists(name string) bool {
+	recs, _ := st.List("favs")
+	for _, r := range recs {
+		if n, _ := r.Data["name"].(string); n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// favToggle adds or removes a studio/cast favorite; al id links back to works.
+func favToggle(name, typ string, alID int) {
+	recs, _ := st.List("favs")
+	for _, r := range recs {
+		if n, _ := r.Data["name"].(string); n == name {
+			_ = st.Delete("favs", r.ID)
+			return
+		}
+	}
+	_, _ = st.Add("favs", map[string]interface{}{
+		"name":  name,
+		"type":  typ,
+		"al_id": float64(alID),
+	})
+}
+
 func onKBHit(action, id string) {
-	switch action {
-	case "card":
+	switch action {	case "card":
 		detailID = id
+		detailInfo = nil
 		pInvalidateRect.Call(hwndMain, 0, 1)
+		fetchDetailAsync(id)
 	case "back":
 		detailID = ""
 		pInvalidateRect.Call(hwndMain, 0, 1)
@@ -1408,6 +1522,14 @@ func onKBHit(action, id string) {
 		kbWatchInc(id)
 	case "status":
 		kbSetStatus(detailID, id)
+	case "dettoggle":
+		// id = "<type>|<name>|<alid>"
+		p := strings.SplitN(id, "|", 3)
+		if len(p) == 3 {
+			al, _ := strconv.Atoi(p[2])
+			favToggle(p[1], p[0], al)
+			pInvalidateRect.Call(hwndMain, 0, 1)
+		}
 	case "searchcancel":
 		cancelSearch()
 	case "openlink":
@@ -2212,6 +2334,11 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		return 0
 	case wmFavWorks:
 		if page == "favs" {
+			pInvalidateRect.Call(hwnd, 0, 1)
+		}
+		return 0
+	case wmDetail:
+		if kbCardMode() && detailID != "" {
 			pInvalidateRect.Call(hwnd, 0, 1)
 		}
 		return 0
