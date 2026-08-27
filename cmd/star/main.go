@@ -5,9 +5,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -16,6 +18,11 @@ import (
 	"butler/internal/config"
 	"butler/internal/monitor"
 	"butler/internal/settings"
+
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
 const (
@@ -44,12 +51,13 @@ var pageLabels = map[string]string{
 
 // colors (COLORREF 0x00BBGGRR)
 const (
-	colBg     = 0x20100c // #0c1020
-	colSide   = 0x2b1610 // #10162b
-	colAccent = 0xeed322 // #22d3ee
-	colFg     = 0xf7ece7 // #e7ecf7
-	colMuted  = 0xbda093 // #93a0bd
-	colOnAcc  = 0x170e0b // #0b0e17
+	colBg    = 0x20100c // #0c1020
+	colSide  = 0x2b1610 // #10162b
+	colAcc   = 0xeed322 // #22d3ee
+	colFg    = 0xf7ece7 // #e7ecf7
+	colMuted = 0xa9b4c8 // lighter gray
+	colOnAcc = 0x170e0b // #0b0e17
+	colCard  = 0x2f1c11 // #111c2f panel
 )
 
 var (
@@ -81,7 +89,7 @@ var (
 var (
 	hwndMain           uintptr
 	hwndFont, hBigFont uintptr
-	brushBg, brushSide uintptr
+	brushBg, brushCard uintptr
 	hNav               [20]uintptr
 	hTitle, hBody      uintptr
 	page               string
@@ -136,6 +144,12 @@ func setText(h uintptr, s string) {
 	pSetWindowText.Call(h, uintptr(unsafe.Pointer(sp)))
 }
 
+func getText(h uintptr) string {
+	buf := make([]uint16, 256)
+	n, _, _ := pSendMessage.Call(h, 0x000D, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
+	return windows.UTF16ToString(buf[:n])
+}
+
 func createWin32Font(size int, bold bool) uintptr {
 	w := uintptr(400)
 	if bold {
@@ -166,18 +180,36 @@ func curIcon(hInst uintptr) uintptr {
 	return r
 }
 
-func renderPage() {
-	title, body := pageLabels[page], ""
-	switch page {
-	case "overview":
-		body = "这是原生 Win32 界面，已启用深色主题。\n\n侧边栏导航可点（owner-draw 按钮），页面切换正常。\n\n后台数据（CPU/内存/磁盘/知识库等）将逐步接入。"
-	case "settings":
-		body = "开机自启动: " + boolStr(settings.Load(dataDir).AutoStart) + "\n\n（设置页后续接入）"
-	default:
-		body = "「" + pageLabels[page] + "」页面移植中，将逐个接入后台数据。"
+func humanBytes(n uint64) string {
+	const u = 1024
+	if n < u {
+		return fmt.Sprintf("%d B", n)
 	}
-	setText(hTitle, title)
-	setText(hBody, body)
+	units := []string{"KB", "MB", "GB", "TB"}
+	val := float64(n)
+	i := -1
+	for val >= u && i < len(units)-1 {
+		val /= u
+		i++
+	}
+	prec := 1
+	if val >= 100 {
+		prec = 0
+	}
+	return fmt.Sprintf("%.*f %s", prec, val, units[i])
+}
+
+func fmtDuration(sec uint64) string {
+	d := sec / 86400
+	h := (sec % 86400) / 3600
+	m := (sec % 3600) / 60
+	if d > 0 {
+		return fmt.Sprintf("%d 天 %d 小时", d, h)
+	}
+	if h > 0 {
+		return fmt.Sprintf("%d 小时 %d 分", h, m)
+	}
+	return fmt.Sprintf("%d 分钟", m)
 }
 
 func boolStr(b bool) string {
@@ -185,6 +217,45 @@ func boolStr(b bool) string {
 		return "开"
 	}
 	return "关"
+}
+
+func overviewText() string {
+	var sb strings.Builder
+	if c, err := cpu.Percent(0, false); err == nil && len(c) > 0 {
+		sb.WriteString(fmt.Sprintf("CPU: %.1f%%\n", c[0]))
+	}
+	if m, err := mem.VirtualMemory(); err == nil {
+		sb.WriteString(fmt.Sprintf("内存: %.1f%%  (%s / %s)\n", m.UsedPercent, humanBytes(m.Used), humanBytes(m.Total)))
+	}
+	if up, err := host.Uptime(); err == nil {
+		sb.WriteString(fmt.Sprintf("运行: %s\n", fmtDuration(up)))
+	}
+	sb.WriteString("\n磁盘:\n")
+	if parts, err := disk.Partitions(false); err == nil {
+		for _, p := range parts {
+			if u, err := disk.Usage(p.Mountpoint); err == nil && u.Total > 0 {
+				sb.WriteString(fmt.Sprintf("  %s  %.1f%%  %s / %s\n", p.Mountpoint, u.UsedPercent, humanBytes(u.Used), humanBytes(u.Total)))
+			}
+		}
+	}
+	if sb.Len() == 0 {
+		return "（未能获取系统信息）"
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func renderPage() {
+	title, body := pageLabels[page], ""
+	switch page {
+	case "overview":
+		body = overviewText()
+	case "settings":
+		body = "开机自启动: " + boolStr(settings.Load(dataDir).AutoStart) + "\n\n（设置页后续接入）"
+	default:
+		body = "「" + pageLabels[page] + "」页面移植中，将逐个接入后台数据。"
+	}
+	setText(hTitle, title)
+	setText(hBody, body)
 }
 
 func highlightNav() {
@@ -211,8 +282,13 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 	case 0x002B: // WM_DRAWITEM
 		return drawItem(uintptr(lParam))
 	case 0x0138: // WM_CTLCOLORSTATIC
-		pSetTextColor.Call(wParam, colFg)
 		pSetBkMode.Call(wParam, 1) // TRANSPARENT
+		if uintptr(0xFFFF)&wParam == IDBody {
+			pSetTextColor.Call(wParam, colFg)
+			pSetBkColor.Call(wParam, colCard)
+			return brushCard
+		}
+		pSetTextColor.Call(wParam, colFg)
 		return brushBg
 	case 0x0010: // WM_CLOSE
 		pDestroyWindow.Call(hwnd)
@@ -235,32 +311,21 @@ func drawItem(diPtr uintptr) uintptr {
 		return r
 	}
 	idx := di.CtlID - navBase
-	// choose fill + text color
 	fill := colSide
 	tc := colFg
 	if pages[idx] == page {
-		fill = colAccent
+		fill = colAcc
 		tc = colOnAcc
 	}
-	// background fill
 	brush, _, _ := pCreateSolidBrush.Call(uintptr(fill))
 	pFillRect.Call(di.HDC, uintptr(unsafe.Pointer(&di.RcItem)), brush)
 	pDeleteObject.Call(brush)
-	// draw label centered
 	pSetBkMode.Call(di.HDC, 1)
 	pSetTextColor.Call(di.HDC, uintptr(tc))
-	// button text
-	txt := getText(di.HwndItem)
-	tp, _ := windows.UTF16PtrFromString(txt)
+	tp, _ := windows.UTF16PtrFromString(getText(di.HwndItem))
 	rc := di.RcItem
-	pDrawText.Call(di.HDC, uintptr(unsafe.Pointer(tp)), uintptr(0xFFFFFFFF), uintptr(unsafe.Pointer(&rc)), 0x25) // DT_CENTER|DT_VCENTER|DT_SINGLELINE
+	pDrawText.Call(di.HDC, uintptr(unsafe.Pointer(tp)), uintptr(0xFFFFFFFF), uintptr(unsafe.Pointer(&rc)), 0x25)
 	return 1
-}
-
-func getText(h uintptr) string {
-	buf := make([]uint16, 256)
-	n, _, _ := pSendMessage.Call(h, 0x000D, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
-	return windows.UTF16ToString(buf[:n])
 }
 
 func main() {
@@ -275,8 +340,8 @@ func main() {
 	mgr = monitor.New()
 	page = "overview"
 
-	brushBg, _, _ = pCreateSolidBrush.Call(colBg)
-	brushSide, _, _ = pCreateSolidBrush.Call(colSide)
+	brushBg, _, _ = pCreateSolidBrush.Call(uintptr(colBg))
+	brushCard, _, _ = pCreateSolidBrush.Call(uintptr(colCard))
 
 	clsName := utf16("STARBOXMainWnd")
 	wc := wndClassEx{
@@ -295,31 +360,26 @@ func main() {
 		uintptr(unsafe.Pointer(clsName)),
 		uintptr(unsafe.Pointer(utf16("星匣 STARBOX"))),
 		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 1120, 720,
+		0x80000000, 0x80000000, 1180, 740,
 		0, 0, hInst, 0)
 
 	hwndFont = createWin32Font(15, false)
 	hBigFont = createWin32Font(21, true)
-	_ = hBigFont
-	// Brand
-	brand := createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 28, 30, 200, 34, hBigFont)
-	_ = brand
-	tag := createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 28, 70, 200, 20, hwndFont)
-	_ = tag
-	// Sidebar nav (owner-draw buttons)
-	navL, navH := 230, 42
+
+	createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 30, 30, 200, 34, hBigFont)
+	createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 30, 70, 200, 20, hwndFont)
+
+	navL, navH := 240, 42
 	for i, p := range pages {
 		label := pageLabels[p]
 		if p == page {
 			label = "● " + label
 		}
-		hNav[i] = createChild("BUTTON", label, bsOwnerDraw, navBase+i, 22, 104+i*navH, navL-40, navH-6, hwndFont)
+		hNav[i] = createChild("BUTTON", label, bsOwnerDraw, navBase+i, 24, 108+i*navH, navL-46, navH-6, hwndFont)
 	}
-	// Divider line between sidebar and content (a static strip)
-	createChild("STATIC", "", ssLeft, 0, 248, 96, 2, 720, 0)
-	// Content
-	hTitle = createChild("STATIC", "", ssLeft, IDTitle, 284, 30, 800, 36, hBigFont)
-	hBody = createChild("STATIC", "", ssLeft, IDBody, 284, 82, 800, 580, hwndFont)
+
+	hTitle = createChild("STATIC", "", ssLeft, IDTitle, 300, 30, 840, 36, hBigFont)
+	hBody = createChild("STATIC", "", ssLeft, IDBody, 300, 82, 840, 600, hwndFont)
 	renderPage()
 
 	pShowWindow.Call(hwndMain, 5)
