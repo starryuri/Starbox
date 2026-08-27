@@ -87,6 +87,9 @@ const (
 	colorOnColor = 3
 	wmAppCover   = 0x8001
 	wmAppRefresh = 0x8002
+	wmOverview   = 0x8003
+	wmInsight    = 0x8004
+	wmDisk       = 0x8005
 )
 
 // DrawText flags
@@ -433,8 +436,7 @@ func insightInfo() string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-func updateCards() {
-	var c0, m0, u0, d0 string
+func computeStats() (c0, m0, u0, d0 string) {
 	if c, err := cpu.Percent(0, false); err == nil && len(c) > 0 {
 		c0 = fmt.Sprintf("%.0f%%", c[0])
 	}
@@ -449,10 +451,59 @@ func updateCards() {
 			d0 = fmt.Sprintf("%.0f%%", u.UsedPercent)
 		}
 	}
-	setText(hCards[0], "CPU\n"+c0)
-	setText(hCards[1], "内存\n"+m0)
-	setText(hCards[2], "运行\n"+u0)
-	setText(hCards[3], "磁盘\n"+d0)
+	return
+}
+
+// async loaders keep the UI thread free so blocking network/scan work never
+// makes the window "not responding". Results are posted back for the UI thread.
+var (
+	ovBusy, insBusy, dskBusy bool
+	ovStat                    [4]string
+	ovBody, insText, dskBody  string
+)
+
+func loadOverview() {
+	if ovBusy {
+		return
+	}
+	ovBusy = true
+	setText(hCards[0], "CPU:\n…")
+	setText(hCards[1], "内存:\n…")
+	setText(hCards[2], "运行:\n…")
+	setText(hCards[3], "磁盘:\n…")
+	go func() {
+		c0, m0, u0, d0 := computeStats()
+		ovStat[0], ovStat[1], ovStat[2], ovStat[3] = c0, m0, u0, d0
+		ovBody = diskText()
+		ovBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmOverview), 0, 0)
+	}()
+}
+
+func loadInsight() {
+	if insBusy {
+		return
+	}
+	insBusy = true
+	setText(hInfo, "（正在获取 GitHub 热门…）")
+	go func() {
+		insText = insightInfo()
+		insBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmInsight), 0, 0)
+	}()
+}
+
+func loadDisk() {
+	if dskBusy {
+		return
+	}
+	dskBusy = true
+	setText(hBody, "（正在扫描磁盘，可能需要几秒…）")
+	go func() {
+		dskBody = dirText()
+		dskBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmDisk), 0, 0)
+	}()
 }
 
 func diskText() string {
@@ -1301,11 +1352,11 @@ func renderPage() {
 	var body string
 	switch {
 	case overview:
-		updateCards()
-		body = diskText()
+		loadOverview()
+		body = "（正在获取系统信息…）"
 	case insight:
-		setText(hInfo, insightInfo())
 		loadBind()
+		loadInsight()
 	case setSet:
 		pSendMessage.Call(hAuto, 0x00F1, pBool(settings.Load(dataDir).AutoStart), 0) // BM_SETCHECK
 		body = "设置：\n\n（设置页其余选项后续接入）"
@@ -1317,7 +1368,8 @@ func renderPage() {
 			body = kbText()
 		}
 	case page == "disk":
-		body = dirText()
+		loadDisk()
+		body = "（正在扫描磁盘…）"
 	case lm:
 		listPage = page
 		listScroll = 0
@@ -1496,6 +1548,25 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 	case wmAppCover, wmAppRefresh:
 		// covers / data changed -> repaint
 		pInvalidateRect.Call(hwnd, 0, 1)
+		return 0
+	case wmOverview:
+		if page == "overview" {
+			setText(hCards[0], "CPU:\n"+ovStat[0])
+			setText(hCards[1], "内存:\n"+ovStat[1])
+			setText(hCards[2], "运行:\n"+ovStat[2])
+			setText(hCards[3], "磁盘:\n"+ovStat[3])
+			setText(hBody, ovBody)
+		}
+		return 0
+	case wmInsight:
+		if page == "insight" {
+			setText(hInfo, insText)
+		}
+		return 0
+	case wmDisk:
+		if page == "disk" {
+			setText(hBody, dskBody)
+		}
 		return 0
 	case 0x002B: // WM_DRAWITEM
 		return drawItem(uintptr(lParam))
