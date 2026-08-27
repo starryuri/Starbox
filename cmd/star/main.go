@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/draw"
@@ -33,6 +34,7 @@ import (
 	"butler/internal/githot"
 	"butler/internal/kb"
 	"butler/internal/monitor"
+	"butler/internal/rss"
 	"butler/internal/settings"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -96,6 +98,7 @@ const (
 	wmDisk       = 0x8005
 	wmFavWorks   = 0x8006
 	wmSearchDone = 0x8007
+	wmRss        = 0x8008
 )
 
 // DrawText flags
@@ -143,6 +146,7 @@ var (
 	pCreateFont         = gdi32.NewProc("CreateFontW")
 	pSendMessage        = user32.NewProc("SendMessageW")
 	pPostMessage        = user32.NewProc("PostMessageW")
+	pSetTimer           = user32.NewProc("SetTimer")
 	pSetWindowText      = user32.NewProc("SetWindowTextW")
 	pShowWindow         = user32.NewProc("ShowWindow")
 	pUpdateWindow       = user32.NewProc("UpdateWindow")
@@ -569,26 +573,33 @@ func computeStats() (c0, m0, u0, d0 string) {
 // makes the window "not responding". Results are posted back for the UI thread.
 var (
 	ovBusy, insBusy, dskBusy bool
+	ovLoaded                 bool // overview stats fetched at least once
+	rssBusy                  bool
+	rssText                  string
+	cfg                      *config.Config
 	ovStat                  [4]string
 	ovBody, insText, dskBody string
 )
 
 // wmAppRefreshNow asks the UI thread to re-run insightInfo off-thread and show it.
-const wmAppRefreshNow = 0x8008
+const wmAppRefreshNow = 0x8009
 
 func loadOverview() {
 	if ovBusy {
 		return
 	}
 	ovBusy = true
-	setText(hCards[0], "CPU:\n…")
-	setText(hCards[1], "内存:\n…")
-	setText(hCards[2], "运行:\n…")
-	setText(hCards[3], "磁盘:\n…")
+	if !ovLoaded { // placeholder text only on first load — no flicker on refresh
+		setText(hCards[0], "CPU:\n…")
+		setText(hCards[1], "内存:\n…")
+		setText(hCards[2], "运行:\n…")
+		setText(hCards[3], "磁盘:\n…")
+	}
 	go func() {
 		c0, m0, u0, d0 := computeStats()
 		ovStat[0], ovStat[1], ovStat[2], ovStat[3] = c0, m0, u0, d0
 		ovBody = diskText()
+		ovLoaded = true
 		ovBusy = false
 		pPostMessage.Call(hwndMain, uintptr(wmOverview), 0, 0)
 	}()
@@ -632,6 +643,174 @@ func loadDisk() {
 		dskBody = dirText()
 		dskBusy = false
 		pPostMessage.Call(hwndMain, uintptr(wmDisk), 0, 0)
+	}()
+}
+
+// ---------- notifications: real sources (airing reminders + feed updates) ----------
+
+// notifySeen reports whether a notification with this dedupe key was stored.
+func notifySeen(key string) bool {
+	recs, err := st.List("notif")
+	if err != nil {
+		return false
+	}
+	for _, r := range recs {
+		if k, _ := r.Data["key"].(string); k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// notifyPush stores one notification unless its dedupe key already exists.
+func notifyPush(key, typ, title, body string, unix int64) {
+	if key != "" && notifySeen(key) {
+		return
+	}
+	data := map[string]interface{}{
+		"title": title,
+		"body":  body,
+		"type":  typ,
+		"read":  false,
+		"unix":  float64(unix),
+	}
+	if key != "" {
+		data["key"] = key
+	}
+	_, _ = st.Add("notif", data)
+}
+
+// collectAiringNotifs turns upcoming AniList episodes of tracked anime into
+// notifications (deduped per episode). Non-blocking: runs in its own goroutine.
+func collectAiringNotifs() {
+	recs, err := st.List("anime")
+	if err != nil {
+		return
+	}
+	ids := make([]int, 0, len(recs))
+	for _, r := range recs {
+		if v, ok := r.Data["anilist_id"].(string); ok && v != "" {
+			if n, e := strconv.Atoi(v); e == nil {
+				ids = append(ids, n)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	ups, err := anime.Upcoming(ids)
+	if err != nil {
+		return
+	}
+	now := time.Now().Unix()
+	for _, u := range ups {
+		if u.AiringAt < now || u.AiringAt > now+7*86400 {
+			continue // only the next 7 days
+		}
+		key := "airing-" + strconv.Itoa(u.MediaID) + "-" + strconv.Itoa(u.Episode)
+		when := time.Unix(u.AiringAt, 0).Format("01-02 15:04")
+		notifyPush(key, "追更", u.Title+" 第 "+strconv.Itoa(u.Episode)+" 集", when+" 播出", u.AiringAt)
+	}
+}
+
+// collectFeedNotifs pulls every rss task from config.json and stores the
+// latest items as notifications (deduped per item link).
+func collectFeedNotifs() {
+	if cfg == nil {
+		return
+	}
+	for _, task := range cfg.Tasks {
+		if task.Type != "rss" || task.URL == "" {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		feed, err := rss.Fetch(ctx, task.URL, task.TimeoutSec)
+		cancel()
+		if err != nil || feed == nil {
+			continue
+		}
+		limit := task.Limit
+		if limit <= 0 || limit > 5 {
+			limit = 3
+		}
+		now := time.Now().Unix()
+		for i, it := range feed.Items {
+			if i >= limit {
+				break
+			}
+			key := it.ID
+			if key == "" {
+				key = it.Link
+			}
+			if key == "" {
+				key = task.ID + "-" + it.Title
+			}
+			notifyPush("feed-"+key, "订阅", it.Title, feed.Title+" · 更新", now)
+		}
+	}
+}
+
+// collectNotifs runs both sources once per session (background, deduped).
+var notifCollected bool
+
+func collectNotifsOnce() {
+	if notifCollected {
+		return
+	}
+	notifCollected = true
+	go func() {
+		collectAiringNotifs()
+		collectFeedNotifs()
+	}()
+}
+
+// ---------- rss page (was a placeholder) ----------
+
+func loadRSS() {
+	if rssBusy {
+		return
+	}
+	rssBusy = true
+	go func() {
+		var sb strings.Builder
+		feeds := 0
+		if cfg != nil {
+			for _, task := range cfg.Tasks {
+				if task.Type != "rss" || task.URL == "" {
+					continue
+				}
+				feeds++
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				feed, err := rss.Fetch(ctx, task.URL, task.TimeoutSec)
+				cancel()
+				sb.WriteString("■ " + task.ID)
+				if err == nil && feed != nil && feed.Title != "" {
+					sb.WriteString(" · " + feed.Title)
+				}
+				sb.WriteString("\n")
+				if err != nil {
+					sb.WriteString("  （获取失败：" + err.Error() + "）\n\n")
+					continue
+				}
+				limit := task.Limit
+				if limit <= 0 || limit > 10 {
+					limit = 8
+				}
+				for i, it := range feed.Items {
+					if i >= limit {
+						break
+					}
+					sb.WriteString("  · " + it.Title + "\n")
+				}
+				sb.WriteString("\n")
+			}
+		}
+		if feeds == 0 {
+			sb.WriteString("（未配置订阅源：在 config.json 的 tasks 中添加 type 为 rss 的条目，然后重启应用）")
+		}
+		rssText = strings.TrimRight(sb.String(), "\n")
+		rssBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmRss), 0, 0)
 	}()
 }
 
@@ -1796,6 +1975,11 @@ func renderPage() {
 	case page == "disk":
 		loadDisk()
 		body = "（正在扫描磁盘…）"
+	case page == "rss":
+		loadRSS()
+		body = "（正在获取订阅…）"
+	case page == "notify":
+		collectNotifsOnce()
 	case lm:
 		listPage = page
 		listScroll = 0
@@ -1970,6 +2154,11 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
 		}
+	case 0x0113: // WM_TIMER
+		if wParam == 1 && page == "overview" {
+			loadOverview() // periodic refresh; guards itself on ovBusy
+		}
+		return 0
 	case 0x000F: // WM_PAINT
 		var ps paintStruct
 		dc, _, _ := pBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
@@ -2014,6 +2203,11 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 	case wmDisk:
 		if page == "disk" {
 			setText(hBody, dskBody)
+		}
+		return 0
+	case wmRss:
+		if page == "rss" {
+			setText(hBody, rssText)
 		}
 		return 0
 	case wmFavWorks:
@@ -2142,7 +2336,7 @@ func main() {
 	dataDir = filepath.Join(filepath.Dir(exe), dataDirName)
 	coverDir = filepath.Join(dataDir, "covers")
 	_ = os.MkdirAll(coverDir, 0o755)
-	_, _ = config.Load(filepath.Join(filepath.Dir(exe), "config.json"))
+	cfg, _ = config.Load(filepath.Join(filepath.Dir(exe), "config.json"))
 	mgr = monitor.New()
 	st = kb.New(dataDir)
 	page = "overview"
@@ -2170,6 +2364,7 @@ func main() {
 		0x80000000, 0x80000000, 1560, 960,
 		0, 0, hInst, 0)
 	enableDarkTitleBar(hwndMain)
+	pSetTimer.Call(hwndMain, 1, 5000, 0) // overview auto-refresh (WM_TIMER id 1)
 
 	fontTitle = createWin32Font(34, true)
 	fontNav = createWin32Font(22, false)
