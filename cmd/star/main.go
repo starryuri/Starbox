@@ -1,7 +1,7 @@
 //go:build windows
 
 // STARBOX — native Win32 desktop app (no WebView2, no Gio). Reliable clicks.
-// Dark modern theme (navy + cyan accent), owner-drawn sidebar nav buttons.
+// Dark theme (navy + cyan accent), owner-drawn sidebar nav, dashboard stat cards.
 package main
 
 import (
@@ -38,6 +38,7 @@ const (
 	navBase = 100
 	IDTitle = 301
 	IDBody  = 302
+	K_CARD  = 401 // 4 cards: 401..404
 )
 
 const dataDirName = "data"
@@ -55,9 +56,9 @@ const (
 	colSide  = 0x2b1610 // #10162b
 	colAcc   = 0xeed322 // #22d3ee
 	colFg    = 0xf7ece7 // #e7ecf7
-	colMuted = 0xa9b4c8 // lighter gray
+	colMuted = 0xa9b4c8
 	colOnAcc = 0x170e0b // #0b0e17
-	colCard  = 0x2f1c11 // #111c2f panel
+	colCard  = 0x362513 // #132536 visibly lighter panel
 )
 
 var (
@@ -84,13 +85,16 @@ var (
 	pSetBkColor       = gdi32.NewProc("SetBkColor")
 	pFillRect         = user32.NewProc("FillRect")
 	pDrawText         = user32.NewProc("DrawTextW")
+	pGetDlgCtrlID     = user32.NewProc("GetDlgCtrlID")
 )
 
 var (
 	hwndMain           uintptr
-	hwndFont, hBigFont uintptr
+	fontTitle, fontNav uintptr
+	fontBody, fontCard uintptr
 	brushBg, brushCard uintptr
 	hNav               [20]uintptr
+	hCards             [4]uintptr
 	hTitle, hBody      uintptr
 	page               string
 	mgr                *monitor.State
@@ -219,40 +223,63 @@ func boolStr(b bool) string {
 	return "关"
 }
 
-func overviewText() string {
-	var sb strings.Builder
+func isCard(id uintptr) bool { return id >= K_CARD && id < uintptr(K_CARD+4) }
+
+func updateCards() {
+	var c0, m0, u0, d0 string
 	if c, err := cpu.Percent(0, false); err == nil && len(c) > 0 {
-		sb.WriteString(fmt.Sprintf("CPU: %.1f%%\n", c[0]))
+		c0 = fmt.Sprintf("%.0f%%", c[0])
 	}
 	if m, err := mem.VirtualMemory(); err == nil {
-		sb.WriteString(fmt.Sprintf("内存: %.1f%%  (%s / %s)\n", m.UsedPercent, humanBytes(m.Used), humanBytes(m.Total)))
+		m0 = fmt.Sprintf("%.0f%%", m.UsedPercent)
 	}
 	if up, err := host.Uptime(); err == nil {
-		sb.WriteString(fmt.Sprintf("运行: %s\n", fmtDuration(up)))
+		u0 = fmtDuration(up)
 	}
-	sb.WriteString("\n磁盘:\n")
+	if parts, err := disk.Partitions(false); err == nil && len(parts) > 0 {
+		if u, err := disk.Usage(parts[0].Mountpoint); err == nil && u.Total > 0 {
+			d0 = fmt.Sprintf("%.0f%%", u.UsedPercent)
+		}
+	}
+	setText(hCards[0], "CPU\n"+c0)
+	setText(hCards[1], "内存\n"+m0)
+	setText(hCards[2], "运行\n"+u0)
+	setText(hCards[3], "磁盘\n"+d0)
+}
+
+func diskText() string {
+	var sb strings.Builder
 	if parts, err := disk.Partitions(false); err == nil {
 		for _, p := range parts {
 			if u, err := disk.Usage(p.Mountpoint); err == nil && u.Total > 0 {
-				sb.WriteString(fmt.Sprintf("  %s  %.1f%%  %s / %s\n", p.Mountpoint, u.UsedPercent, humanBytes(u.Used), humanBytes(u.Total)))
+				sb.WriteString(fmt.Sprintf("%s    %.1f%%    %s / %s\n", p.Mountpoint, u.UsedPercent, humanBytes(u.Used), humanBytes(u.Total)))
 			}
 		}
 	}
 	if sb.Len() == 0 {
-		return "（未能获取系统信息）"
+		return "（未能获取磁盘信息）"
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
 
 func renderPage() {
 	title, body := pageLabels[page], ""
-	switch page {
-	case "overview":
-		body = overviewText()
-	case "settings":
-		body = "开机自启动: " + boolStr(settings.Load(dataDir).AutoStart) + "\n\n（设置页后续接入）"
-	default:
-		body = "「" + pageLabels[page] + "」页面移植中，将逐个接入后台数据。"
+	if page == "overview" {
+		for i := range hCards {
+			pShowWindow.Call(hCards[i], 1)
+		}
+		updateCards()
+		body = diskText()
+	} else {
+		for i := range hCards {
+			pShowWindow.Call(hCards[i], 0)
+		}
+		switch page {
+		case "settings":
+			body = "开机自启动: " + boolStr(settings.Load(dataDir).AutoStart) + "\n\n（设置页后续接入）"
+		default:
+			body = "「" + pageLabels[page] + "」页面移植中，将逐个接入后台数据。"
+		}
 	}
 	setText(hTitle, title)
 	setText(hBody, body)
@@ -282,20 +309,33 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 	case 0x002B: // WM_DRAWITEM
 		return drawItem(uintptr(lParam))
 	case 0x0138: // WM_CTLCOLORSTATIC
-		pSetBkMode.Call(wParam, 1) // TRANSPARENT
-		if uintptr(0xFFFF)&wParam == IDBody {
+		id := uintptr(0)
+		if lParam != 0 {
+			r, _, _ := pGetDlgCtrlID.Call(lParam)
+			id = r
+		}
+		switch {
+		case id == IDBody:
 			pSetTextColor.Call(wParam, colFg)
+			pSetBkMode.Call(wParam, 0) // OPAQUE
+			pSetBkColor.Call(wParam, colSide)
+			return brushBg
+		case isCard(id):
+			pSetTextColor.Call(wParam, colFg)
+			pSetBkMode.Call(wParam, 0) // OPAQUE
 			pSetBkColor.Call(wParam, colCard)
 			return brushCard
+		default:
+			pSetTextColor.Call(wParam, colFg)
+			pSetBkMode.Call(wParam, 1) // TRANSPARENT
+			return brushBg
 		}
-		pSetTextColor.Call(wParam, colFg)
-		return brushBg
 	case 0x0010: // WM_CLOSE
 		pDestroyWindow.Call(hwnd)
 		return 0
 	case 0x0002: // WM_DESTROY
-		if hwndFont != 0 {
-			pDeleteObject.Call(hwndFont)
+		if fontTitle != 0 {
+			pDeleteObject.Call(fontTitle)
 		}
 		pPostQuitMessage.Call(0)
 		return 0
@@ -360,26 +400,35 @@ func main() {
 		uintptr(unsafe.Pointer(clsName)),
 		uintptr(unsafe.Pointer(utf16("星匣 STARBOX"))),
 		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 1180, 740,
+		0x80000000, 0x80000000, 1200, 760,
 		0, 0, hInst, 0)
 
-	hwndFont = createWin32Font(15, false)
-	hBigFont = createWin32Font(21, true)
+	fontTitle = createWin32Font(24, true)
+	fontNav = createWin32Font(16, false)
+	fontBody = createWin32Font(16, false)
+	fontCard = createWin32Font(18, false)
 
-	createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 30, 30, 200, 34, hBigFont)
-	createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 30, 70, 200, 20, hwndFont)
+	createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 30, 30, 240, 40, fontTitle)
+	createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 30, 84, 240, 24, fontNav)
 
-	navL, navH := 240, 42
+	navL, navH := 250, 46
 	for i, p := range pages {
 		label := pageLabels[p]
 		if p == page {
 			label = "● " + label
 		}
-		hNav[i] = createChild("BUTTON", label, bsOwnerDraw, navBase+i, 24, 108+i*navH, navL-46, navH-6, hwndFont)
+		hNav[i] = createChild("BUTTON", label, bsOwnerDraw, navBase+i, 26, 122+i*navH, navL-50, navH-6, fontNav)
 	}
 
-	hTitle = createChild("STATIC", "", ssLeft, IDTitle, 300, 30, 840, 36, hBigFont)
-	hBody = createChild("STATIC", "", ssLeft, IDBody, 300, 82, 840, 600, hwndFont)
+	// Content area
+	ctx, cw := 300, 860
+	hTitle = createChild("STATIC", "", ssLeft, IDTitle, ctx, 30, cw, 40, fontTitle)
+	// stat cards (fill content width)
+	cardW, cardH, gap := (cw-3*16)/4, 130, 16
+	for i := 0; i < 4; i++ {
+		hCards[i] = createChild("STATIC", "", ssLeft, K_CARD+i, ctx+i*(cardW+gap), 92, cardW, cardH, fontCard)
+	}
+	hBody = createChild("STATIC", "", ssLeft, IDBody, ctx, 240, cw, 460, fontBody)
 	renderPage()
 
 	pShowWindow.Call(hwndMain, 5)
