@@ -34,6 +34,7 @@ const (
 	wsVisible          = 0x10000000
 	ssLeft             = 0x00000000
 	bsOwnerDraw        = 0x0000000B
+	bsAutoCheckBox     = 0x00000003
 	esAutoHScroll      = 0x00000080
 	esPassword         = 0x00000020
 	wsTabStop          = 0x00010000
@@ -52,6 +53,8 @@ const (
 	IDReff  = 508
 	IDInfo  = 509
 	IDHint  = 510
+	IDAuto  = 601
+	IDSaveS = 602
 )
 
 const dataDirName = "data"
@@ -116,6 +119,7 @@ var (
 	hPlat               [4]uintptr
 	hAcc, hPass, hSave  uintptr
 	hReff, hInfo, hHint uintptr
+	hAuto, hAutoSave    uintptr
 	page                string
 	mgr                 *monitor.State
 	dataDir             string
@@ -352,7 +356,10 @@ func renderPage() {
 	pShowWindow.Call(hReff, boolShow(insight))
 	pShowWindow.Call(hHint, boolShow(insight))
 	pShowWindow.Call(hInfo, boolShow(insight))
-	pShowWindow.Call(hBody, boolShow(!insight))
+	setSet := page == "settings"
+	pShowWindow.Call(hAuto, boolShow(setSet))
+	pShowWindow.Call(hAutoSave, boolShow(setSet))
+	pShowWindow.Call(hBody, boolShow(!insight && !setSet))
 
 	var body string
 	switch {
@@ -363,7 +370,8 @@ func renderPage() {
 		setText(hInfo, insightInfo())
 		loadBind()
 	case page == "settings":
-		body = "开机自启动: " + boolStr(settings.Load(dataDir).AutoStart) + "\n\n（设置页后续接入）"
+		pSendMessage.Call(hAuto, 0x00F1, boolShow(settings.Load(dataDir).AutoStart), 0) // BM_SETCHECK
+		body = "设置：\n\n（设置页其余选项后续接入）"
 	case page == "disk":
 		body = dirText()
 	default:
@@ -459,6 +467,8 @@ func relayout() {
 	moveWin(hReff, contentX, 214, 120, 36)
 	moveWin(hHint, contentX+130, 216, contentW-130, 30)
 	moveWin(hInfo, contentX, 264, contentW, h-264-30)
+	moveWin(hAuto, contentX, 96, 240, 40)
+	moveWin(hAutoSave, contentX+250, 94, 110, 42)
 	pInvalidateRect.Call(hwndMain, 0, 1)
 }
 
@@ -484,6 +494,20 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		}
 		if id == IDReff {
 			setText(hInfo, insightInfo())
+			return 0
+		}
+		if id == IDSaveS {
+			on := uintptr(0)
+			r, _, _ := pSendMessage.Call(hAuto, 0x00F0, 0, 0) // BM_GETCHECK
+			if r == 1 {
+				on = 1
+			}
+			st := settings.Load(dataDir)
+			st.AutoStart = on == 1
+			exe, _ := os.Executable()
+			_ = settings.SetAutoStart(st.AutoStart, exe)
+			_ = settings.Save(dataDir, st)
+			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
 		}
 	case 0x002B: // WM_DRAWITEM
@@ -617,6 +641,9 @@ func main() {
 	hReff = createChild("BUTTON", "刷新热门", 0, IDReff, 310, 214, 120, 34, fontNav)
 	hHint = createChild("STATIC", "", ssLeft, IDHint, 440, 220, 760, 26, fontNav)
 	hInfo = createChild("STATIC", "", ssLeft, IDInfo, 310, 264, 940, 440, fontBody)
+	// settings page controls
+	hAuto = createChild("BUTTON", "开机自启动", bsAutoCheckBox, IDAuto, 310, 120, 220, 40, fontNav)
+	hAutoSave = createChild("BUTTON", "保存", 0, IDSaveS, 540, 118, 110, 40, fontNav)
 	renderPage()
 
 	pShowWindow.Call(hwndMain, 5)
