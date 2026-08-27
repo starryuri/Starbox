@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -195,6 +196,22 @@ var (
 	coverDir string
 	covers   sync.Map // id -> *covInfo
 )
+
+// --- generic themed list state (favs / notify / rules) ---
+var (
+	listRows  []listRow
+	listHits  []detHit
+	listPage  string // "favs" | "notify" | "rules"
+	listAct   bool   // whether an action button (top-right) is shown
+	listActL  string // action label
+	listScroll int
+)
+
+type listRow struct {
+	id, title, sub, tag string
+	accent              bool // highlight (e.g. unread / current)
+}
+
 
 type kbCard struct {
 	id, title, status string
@@ -997,6 +1014,173 @@ func onKBHit(action, id string) {
 	}
 }
 
+// --- generic themed list page (favs / notify / rules) ---
+
+func listMode() bool { return page == "notify" || page == "favs" || page == "rules" }
+
+func listColl() string {
+	if listPage == "notify" {
+		return "notif"
+	}
+	return listPage
+}
+
+func findRec(coll, id string) *kb.Record {
+	recs, _ := st.List(coll)
+	for i := range recs {
+		if recs[i].ID == id {
+			return &recs[i]
+		}
+	}
+	return nil
+}
+
+func refreshList() {
+	recs, _ := st.List(listColl())
+	listRows = listRows[:0]
+	listHits = listHits[:0]
+	listAct = false
+	switch listPage {
+	case "notify":
+		sort.Slice(recs, func(i, j int) bool {
+			u1, _ := recs[i].Data["unix"].(float64)
+			u2, _ := recs[j].Data["unix"].(float64)
+			return u1 > u2
+		})
+		for _, r := range recs {
+			title, _ := r.Data["title"].(string)
+			body, _ := r.Data["body"].(string)
+			typ, _ := r.Data["type"].(string)
+			read, _ := r.Data["read"].(bool)
+			listRows = append(listRows, listRow{id: r.ID, title: title, sub: body, tag: typ, accent: !read})
+		}
+		listAct = true
+		listActL = "全部已读"
+	case "favs":
+		for _, r := range recs {
+			name, _ := r.Data["name"].(string)
+			typ, _ := r.Data["type"].(string)
+			tag := typ
+			if typ == "studio" {
+				tag = "公司"
+			} else if typ == "cv" {
+				tag = "声优"
+			}
+			listRows = append(listRows, listRow{id: r.ID, title: name, sub: typ, tag: tag})
+		}
+	case "rules":
+		for _, r := range recs {
+			title, _ := r.Data["title"].(string)
+			listRows = append(listRows, listRow{id: r.ID, title: title})
+		}
+	}
+}
+
+func paintListPage(dc uintptr) {
+	cx, cw, top, bottom := kbGeom()
+	fillRectColor(dc, cx, top, cw, bottom-top, colSide)
+	listHits = listHits[:0]
+	// toolbar row (action button top-right)
+	hy := top + 8
+	if listAct {
+		aw, ah := 110, 34
+		ax := cx + cw - aw - 8
+		fillRectColor(dc, ax, hy, aw, ah, colAcc)
+		drawTextRect(dc, ax, hy, aw, ah, listActL, fontNav, colOnAcc, dtSingle|dtVCenter|dtCenter)
+		listHits = append(listHits, detHit{ax, hy, aw, ah, "listaction", ""})
+	}
+	ry := top + 54
+	rh := 72
+	gap := 10
+	if len(listRows) == 0 {
+		msg := "（暂无条目）"
+		switch listPage {
+		case "notify":
+			msg = "（暂无通知）"
+		case "favs":
+			msg = "（暂无收藏，去番剧详情点亮 ☆）"
+		case "rules":
+			msg = "（暂无规则）"
+		}
+		drawTextRect(dc, cx+12, ry, cw-24, 40, msg, fontBody, colDim, dtLeft)
+		return
+	}
+	totalH := len(listRows)*(rh+gap)
+	if listScroll > totalH-(bottom-ry) && totalH > (bottom-ry) {
+		listScroll = totalH - (bottom - ry)
+	}
+	if listScroll < 0 {
+		listScroll = 0
+	}
+	for i, row := range listRows {
+		y := ry + i*(rh+gap) - listScroll
+		if y > bottom {
+			break
+		}
+		if y+rh < top {
+			continue
+		}
+		bg := uintptr(colCard)
+		if row.accent {
+			bg = colCard2
+		}
+		fillRectColor(dc, cx+12, y, cw-24, rh, bg)
+		if row.accent {
+			fillRectColor(dc, cx+12, y, 4, rh, colAcc)
+		}
+		tx := cx + 24
+		if row.tag != "" {
+			tw := 64
+			fillRectColor(dc, cx+24, y+10, tw, 26, colAcc)
+			drawTextRect(dc, cx+24, y+10, tw, 26, row.tag, fontTiny, colOnAcc, dtSingle|dtVCenter|dtCenter)
+			tx = cx + 24 + 72
+		}
+		rightPad := cw - 12 - (tx - cx) - 12
+		if rightPad < 20 {
+			rightPad = 20
+		}
+		drawTextRect(dc, tx, y+8, rightPad, 30, row.title, fontCard, colFg, dtSingle)
+		drawTextRect(dc, tx, y+40, rightPad, 24, row.sub, fontBody, colDim, dtSingle)
+		listHits = append(listHits, detHit{cx + 12, y, cw - 24, rh, "row", row.id})
+	}
+}
+
+func hitTestList(x, y int) string {
+	for _, h := range listHits {
+		if x >= h.x && x < h.x+h.w && y >= h.y && y < h.y+h.h {
+			return h.action + "|" + h.id
+		}
+	}
+	return ""
+}
+
+func onListHit(action, id string) {
+	switch action {
+	case "listaction":
+		if listPage == "notify" {
+			for _, r := range listRows {
+				if rec := findRec("notif", r.id); rec != nil {
+					d := copyMap(rec.Data)
+					d["read"] = true
+					_, _ = st.Update("notif", r.id, d)
+				}
+			}
+			refreshList()
+			pInvalidateRect.Call(hwndMain, 0, 1)
+		}
+	case "row":
+		if listPage == "notify" {
+			if rec := findRec("notif", id); rec != nil {
+				d := copyMap(rec.Data)
+				d["read"] = true
+				_, _ = st.Update("notif", id, d)
+			}
+			refreshList()
+			pInvalidateRect.Call(hwndMain, 0, 1)
+		}
+	}
+}
+
 func highlightNav() {
 	for i, p := range pages {
 		label := pageLabels[p]
@@ -1108,8 +1292,9 @@ func renderPage() {
 	pShowWindow.Call(hKbAddBtn, pBool(kbon))
 
 	cm := kbCardMode()
-	pShowWindow.Call(hBody, pBool(!insight && !setSet && !cm))
-	if cm {
+	lm := listMode()
+	pShowWindow.Call(hBody, pBool(!insight && !setSet && !cm && !lm))
+	if cm || lm {
 		setText(hBody, "")
 	}
 
@@ -1133,11 +1318,16 @@ func renderPage() {
 		}
 	case page == "disk":
 		body = dirText()
+	case lm:
+		listPage = page
+		listScroll = 0
+		refreshList()
+		pInvalidateRect.Call(hwndMain, 0, 1)
 	default:
 		body = "「" + pageLabels[page] + "」页面移植中，将逐个接入后台数据。"
 	}
 	setText(hTitle, title)
-	if !cm {
+	if !cm && !lm {
 		setText(hBody, body)
 	}
 }
@@ -1178,6 +1368,10 @@ func paintFragment(dc uintptr) {
 		} else {
 			paintKBCards(dc)
 		}
+		return
+	}
+	if listMode() {
+		paintListPage(dc)
 	}
 }
 
@@ -1249,6 +1443,18 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 				return 0
 			}
 		}
+		if listMode() {
+			x, y := mouseXY(lParam)
+			if h := hitTestList(x, y); h != "" {
+				parts := strings.SplitN(h, "|", 2)
+				id := ""
+				if len(parts) == 2 {
+					id = parts[1]
+				}
+				onListHit(parts[0], id)
+				return 0
+			}
+		}
 	case 0x020A: // WM_MOUSEWHEEL
 		if kbCardMode() && detailID == "" {
 			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
@@ -1257,6 +1463,15 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 				kbScroll = 0
 			}
 			kbCards = kbs2cards()
+			pInvalidateRect.Call(hwndMain, 0, 1)
+			return 0
+		}
+		if listMode() {
+			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
+			listScroll -= delta / 120 * 90
+			if listScroll < 0 {
+				listScroll = 0
+			}
 			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
 		}
