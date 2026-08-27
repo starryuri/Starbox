@@ -40,11 +40,12 @@ func Save(dir string, s Settings) error {
 
 // SetAutoStart adds (or removes) the STARBOX entry in the HKCU Run registry key.
 // It shells out to the built-in Windows reg.exe to avoid extra Go dependencies.
-// The app is registered with `-tray` so it starts quietly in the system tray at
-// login instead of popping up the main window.
+// Note: the app currently takes no command-line arguments. A `-tray` flag was
+// previously registered here but never implemented — removed; tray support may
+// come back together with real -tray handling.
 func SetAutoStart(enable bool, exe string) error {
 	if enable {
-		cmd := fmt.Sprintf("\"%s\" -tray", exe)
+		cmd := fmt.Sprintf("\"%s\"", exe)
 		return exec.Command("reg", "add", runKey, "/v", runName, "/t", "REG_SZ", "/d", cmd, "/f").Run()
 	}
 	return exec.Command("reg", "delete", runKey, "/v", runName, "/f").Run()

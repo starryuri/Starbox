@@ -12,6 +12,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -133,6 +135,8 @@ var (
 	uxtheme  = windows.NewLazySystemDLL("uxtheme.dll")
 
 	pCreateWindowEx     = user32.NewProc("CreateWindowExW")
+	pSetWindowLongPtr   = user32.NewProc("SetWindowLongPtrW")
+	pCallWindowProc     = user32.NewProc("CallWindowProcW")
 	pDefWindowProc      = user32.NewProc("DefWindowProcW")
 	pDestroyWindow      = user32.NewProc("DestroyWindow")
 	pRegisterClassEx    = user32.NewProc("RegisterClassExW")
@@ -365,6 +369,96 @@ func curIcon(hInst uintptr) uintptr {
 	return r
 }
 
+// --- edit subclass: forward WM_MOUSEWHEEL to the main window ---
+// Without this, wheel scrolling dies once an EDIT control gains focus
+// (classic Win32 focus trap: the focused edit swallows the wheel).
+
+var (
+	origEditProc    uintptr
+	editWheelProcCb = syscall.NewCallback(editWheelProc)
+)
+
+func subclassEditWheel(h uintptr) {
+	if h == 0 {
+		return
+	}
+	r, _, _ := pSetWindowLongPtr.Call(h, ^uintptr(3), editWheelProcCb) // GWLP_WNDPROC = -4
+	if origEditProc == 0 {
+		origEditProc = r
+	}
+}
+
+func editWheelProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
+	if msg == 0x020A && hwndMain != 0 { // WM_MOUSEWHEEL -> let the main window scroll cards/lists
+		pSendMessage.Call(hwndMain, uintptr(msg), wp, lp)
+		return 0
+	}
+	r, _, _ := pCallWindowProc.Call(origEditProc, hwnd, uintptr(msg), wp, lp)
+	return r
+}
+
+// acquireSingleInstance creates a named mutex; false means another instance
+// is already running (a second one could corrupt the JSON stores under data/).
+// The existing window is raised to the foreground instead — professional apps
+// never pop a modal "already running" box for a simple second launch.
+func acquireSingleInstance() bool {
+	CreateMutexW := kernel32.NewProc("CreateMutexW")
+	name, _ := windows.UTF16PtrFromString("Local\\STARBOX.SingleInstance")
+	_, _, err := CreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
+	if e, ok := err.(syscall.Errno); ok && e == windows.ERROR_ALREADY_EXISTS {
+		cls, _ := windows.UTF16PtrFromString("STARBOXMainWnd")
+		if hwnd, _, _ := user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(cls)), 0); hwnd != 0 {
+			user32.NewProc("ShowWindow").Call(hwnd, 9) // SW_RESTORE
+			user32.NewProc("SetForegroundWindow").Call(hwnd)
+		}
+		return false
+	}
+	return true
+}
+
+// enableDarkTitleBar switches the window title bar to the dark theme
+// (DWMWA_USE_IMMERSIVE_DARK_MODE) so it matches the dark content.
+func enableDarkTitleBar(hwnd uintptr) {
+	dwm := windows.NewLazySystemDLL("dwmapi.dll")
+	setAttr := dwm.NewProc("DwmSetWindowAttribute")
+	on := int32(1)
+	setAttr.Call(hwnd, 20, uintptr(unsafe.Pointer(&on)), 4)
+}
+
+func openURL(u string) {
+	u = strings.TrimSpace(u)
+	if u == "" || !(strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")) {
+		return
+	}
+	shell32 := windows.NewLazySystemDLL("shell32.dll")
+	ShellExecuteW := shell32.NewProc("ShellExecuteW")
+	op, _ := windows.UTF16PtrFromString("open")
+	up, err := windows.UTF16PtrFromString(u)
+	if err != nil {
+		return
+	}
+	ShellExecuteW.Call(0, uintptr(unsafe.Pointer(op)), uintptr(unsafe.Pointer(up)), 0, 0, 5)
+}
+
+// msgBox shows a native message box owned by the main window.
+func msgBox(text, caption string, flags uintptr) int {
+	MessageBoxW := user32.NewProc("MessageBoxW")
+	tp, _ := windows.UTF16PtrFromString(text)
+	cp, _ := windows.UTF16PtrFromString(caption)
+	r, _, _ := MessageBoxW.Call(hwndMain, uintptr(unsafe.Pointer(tp)), uintptr(unsafe.Pointer(cp)), flags)
+	return int(r)
+}
+
+// confirmBox asks a yes/no question (used before destructive actions).
+func confirmBox(text, caption string) bool {
+	return msgBox(text, caption, 0x00000004|0x00000030) == 6 // MB_YESNO|MB_ICONWARNING, IDYES
+}
+
+// noticeBox shows an informational message.
+func noticeBox(text, caption string) {
+	msgBox(text, caption, 0x00000040) // MB_ICONINFORMATION
+}
+
 func humanBytes(n uint64) string {
 	const u = 1024
 	if n < u {
@@ -475,9 +569,12 @@ func computeStats() (c0, m0, u0, d0 string) {
 // makes the window "not responding". Results are posted back for the UI thread.
 var (
 	ovBusy, insBusy, dskBusy bool
-	ovStat                    [4]string
-	ovBody, insText, dskBody  string
+	ovStat                  [4]string
+	ovBody, insText, dskBody string
 )
+
+// wmAppRefreshNow asks the UI thread to re-run insightInfo off-thread and show it.
+const wmAppRefreshNow = 0x8008
 
 func loadOverview() {
 	if ovBusy {
@@ -507,6 +604,21 @@ func loadInsight() {
 		insText = insightInfo()
 		insBusy = false
 		pPostMessage.Call(hwndMain, uintptr(wmInsight), 0, 0)
+	}()
+}
+
+// refreshInsight is the async path behind the "刷新热门" button. It keeps
+// the UI thread free (the old synchronous call froze the window for up to 20s).
+func refreshInsight() {
+	if insBusy {
+		return
+	}
+	insBusy = true
+	setText(hInfo, "（正在刷新…）")
+	go func() {
+		insText = insightInfo()
+		insBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmAppRefreshNow), 0, 0)
 	}()
 }
 
@@ -659,14 +771,15 @@ func ensureCover(id, url string) {
 				// (still keeps placeholder)
 			}
 		}()
-		resp, err := http.Get(url)
+		client := &http.Client{Timeout: 15 * time.Second}
+		resp, err := client.Get(url)
 		if err != nil {
 			covers.Store(id, &covInfo{path: path})
 			return
 		}
 		defer resp.Body.Close()
 		var buf bytes.Buffer
-		_, _ = buf.ReadFrom(resp.Body)
+		_, _ = buf.ReadFrom(io.LimitReader(resp.Body, 8<<20)) // cap cover downloads at 8MB
 		data := buf.Bytes()
 		if len(data) < 64 {
 			covers.Store(id, &covInfo{path: path})
@@ -756,6 +869,30 @@ func refreshKB() {
 		if c, _ := r.Data["cover"].(string); c != "" {
 			ensureCover(r.ID, c)
 		}
+	}
+}
+
+// clampKbScroll keeps the card wall from scrolling past the last card
+// (previously it could scroll the whole grid out of view).
+func clampKbScroll() {
+	if len(kbCards) == 0 {
+		kbScroll = 0
+		return
+	}
+	maxBottom := 0
+	for _, c := range kbCards {
+		if b := c.y + c.h; b > maxBottom {
+			maxBottom = b
+		}
+	}
+	raw := maxBottom + kbScroll // content bottom without any scrolling
+	_, _, _, bottom := kbGeom()
+	if limit := raw - bottom + 40; limit > 0 {
+		if kbScroll > limit {
+			kbScroll = limit
+		}
+	} else {
+		kbScroll = 0
 	}
 }
 
@@ -920,7 +1057,7 @@ func paintKBDetail(dc uintptr) {
 	}
 	drawTextRect(dc, ix, my, iw, 38, meta, fontNav, colDim, dtSingle|dtVCenter)
 	ny := my + 52
-	nh := bottom - ny - 96
+	nh := bottom - ny - 116 // leave room for the link bar above the buttons
 	if nh < 50 {
 		nh = 50
 	}
@@ -945,7 +1082,13 @@ func paintKBDetail(dc uintptr) {
 	drawTextRect(dc, dx, by, bw, bh, "删除", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
 	detHits = append(detHits, detHit{dx, by, bw, bh, "delete", r.ID})
 	if link, _ := data["link"].(string); link != "" {
-		drawTextRect(dc, ix, by+2, iw-10, 44, "链接: "+link, fontTiny, colDim, dtSingle)
+		// draw a real, clickable-looking link bar at the bottom of the info column
+		lw2 := iw
+		if lw2 > bw {
+			lw2 = bw
+		}
+		drawTextRect(dc, ix, by-34, lw2, 34, "链接: "+link, fontTiny, colAcc, dtSingle|dtVCenter)
+		detHits = append(detHits, detHit{ix, by - 34, lw2, 34, "openlink", link})
 	}
 }
 
@@ -1006,6 +1149,9 @@ func kbWatchInc(id string) {
 }
 
 func kbDelete(id string) {
+	if !confirmBox("确定删除该条目？删除后无法恢复。", "删除确认") {
+		return
+	}
 	_ = st.Delete(kbCol, id)
 	detailID = ""
 	kbReload()
@@ -1085,6 +1231,8 @@ func onKBHit(action, id string) {
 		kbSetStatus(detailID, id)
 	case "searchcancel":
 		cancelSearch()
+	case "openlink":
+		openURL(id)
 	case "seadd":
 		if n, err := strconv.Atoi(id); err == nil {
 			addAnimeFromSearch(n)
@@ -1442,6 +1590,9 @@ func loadFavWorks() {
 }
 
 func favDelete(id string) {
+	if !confirmBox("确定删除该收藏？", "删除确认") {
+		return
+	}
 	_ = st.Delete("favs", id)
 	favDetailID = ""
 	refreshList()
@@ -1735,7 +1886,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			return 0
 		}
 		if id == IDReff {
-			setText(hInfo, insightInfo())
+			refreshInsight()
 			return 0
 		}
 		if id == IDSaveS {
@@ -1799,13 +1950,14 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			}
 		}
 	case 0x020A: // WM_MOUSEWHEEL
-		if kbCardMode() && detailID == "" {
+		if kbCardMode() && detailID == "" && !searchMode {
 			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
 			kbScroll -= delta / 120 * 90
 			if kbScroll < 0 {
 				kbScroll = 0
 			}
 			kbCards = kbs2cards()
+			clampKbScroll()
 			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
 		}
@@ -1847,6 +1999,11 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			setText(hCards[2], "运行:\n"+ovStat[2])
 			setText(hCards[3], "磁盘:\n"+ovStat[3])
 			setText(hBody, ovBody)
+		}
+		return 0
+	case wmAppRefreshNow:
+		if page == "insight" {
+			setText(hInfo, insText)
 		}
 		return 0
 	case wmInsight:
@@ -1974,6 +2131,9 @@ func drawItem(diPtr uintptr) uintptr {
 
 func main() {
 	runtime.LockOSThread()
+	if !acquireSingleInstance() {
+		return // existing window was raised instead
+	}
 	user32.NewProc("SetProcessDPIAware").Call()
 	mod, _, _ := kernel32.NewProc("GetModuleHandleW").Call(0)
 	hInst := mod
@@ -2009,6 +2169,7 @@ func main() {
 		uintptr(wsOverlappedWindow),
 		0x80000000, 0x80000000, 1560, 960,
 		0, 0, hInst, 0)
+	enableDarkTitleBar(hwndMain)
 
 	fontTitle = createWin32Font(34, true)
 	fontNav = createWin32Font(22, false)
@@ -2056,6 +2217,10 @@ func main() {
 	pSetWindowTheme.Call(hKbToA, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
 	pSetWindowTheme.Call(hAcc, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
 	pSetWindowTheme.Call(hPass, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
+	// forward wheel messages from the edits so scrolling never dies after typing
+	subclassEditWheel(hKbToA)
+	subclassEditWheel(hAcc)
+	subclassEditWheel(hPass)
 	renderPage()
 
 	pShowWindow.Call(hwndMain, 5)

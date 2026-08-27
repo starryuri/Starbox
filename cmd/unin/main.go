@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -30,6 +31,7 @@ const (
 	wsTabStop          = 0x00010000
 	ssLeft             = 0x00000000
 	bsPushButton       = 0x00000000
+	bsAutoCheckBox     = 0x00000003
 	colorWindow        = 5
 )
 
@@ -39,6 +41,7 @@ const (
 	IDDone      = 103
 	IDMsg       = 104
 	IDStatus    = 105
+	IDKeepData  = 106
 )
 
 var (
@@ -66,6 +69,7 @@ var (
 	hwndFont                            uintptr
 	hUninstallBtn, hCancelBtn, hDoneBtn uintptr
 	hMsg, hStatus                       uintptr
+	hKeepData                           uintptr
 	wndProc                             = syscall.NewCallback(wndProcMain)
 )
 
@@ -116,7 +120,9 @@ func shortLinkPaths() (sm, desktop string) {
 }
 
 // uninstall removes shortcuts, registry, and files (self scheduled for reboot).
-func uninstall(dir string) {
+// keepData preserves the user's data/ directory (anime library, covers,
+// bindings, settings) — previously it was silently wiped with everything else.
+func uninstall(dir string, keepData bool) {
 	if dir == "" {
 		if self, err := os.Executable(); err == nil {
 			dir = filepath.Dir(self)
@@ -133,6 +139,9 @@ func uninstall(dir string) {
 		for _, e := range entries {
 			p := filepath.Join(dir, e.Name())
 			if e.IsDir() {
+				if keepData && strings.EqualFold(e.Name(), "data") {
+					continue // keep the user's library / covers / bindings
+				}
 				_ = os.RemoveAll(p)
 				continue
 			}
@@ -145,7 +154,7 @@ func uninstall(dir string) {
 	if self != "" {
 		var k32 = syscall.NewLazyDLL("kernel32.dll")
 		moveFileEx := k32.NewProc("MoveFileExW")
-		if p, err := syscall.UTF16PtrFromString(self); err == nil {
+			if p, err := syscall.UTF16PtrFromString(self); err == nil {
 			moveFileEx.Call(uintptr(unsafe.Pointer(p)), 0, 0x4) // MOVEFILE_DELAY_UNTIL_REBOOT
 		}
 	}
@@ -179,12 +188,22 @@ func setStatus(text string) {
 }
 
 func doUninstall() {
+	keep := false
+	if hKeepData != 0 {
+		r, _, _ := pSendMessage.Call(hKeepData, 0x00F0 /*BM_GETCHECK*/, 0, 0)
+		keep = r == 1
+	}
 	setStatus("正在卸载…")
 	pShowWindow.Call(hUninstallBtn, 0)
 	pShowWindow.Call(hCancelBtn, 0)
-	uninstall("")
+	pShowWindow.Call(hKeepData, 0)
+	uninstall("", keep)
 	// done state
-	setText(hMsg, "已卸载。文件将在重启后彻底清理。")
+	if keep {
+		setText(hMsg, "已卸载。你的数据（data 目录）已保留。文件将在重启后彻底清理。")
+	} else {
+		setText(hMsg, "已卸载（含全部数据）。文件将在重启后彻底清理。")
+	}
 	pShowWindow.Call(hDoneBtn, 1)
 	setStatus("")
 }
@@ -253,6 +272,8 @@ func main() {
 	hwndFont = createWin32Font(21, false)
 	hMsg = createChild("STATIC", "确定要卸载 STARBOX 吗？", ssLeft, IDMsg, 24, 34, 572, 52)
 	hStatus = createChild("STATIC", "", ssLeft, IDStatus, 24, 108, 572, 46)
+	hKeepData = createChild("BUTTON", "保留我的数据（番剧库 / 封面 / 设置）", bsAutoCheckBox, IDKeepData, 24, 152, 480, 30)
+	pSendMessage.Call(hKeepData, 0x00F1 /*BM_SETCHECK*/, 1, 0)
 	hUninstallBtn = createChild("BUTTON", "卸载", bsPushButton, IDUninstall, 180, 200, 130, 44)
 	hCancelBtn = createChild("BUTTON", "取消", bsPushButton, IDCancel, 330, 200, 120, 44)
 	hDoneBtn = createChild("BUTTON", "完成", bsPushButton, IDDone, 470, 200, 120, 44)
