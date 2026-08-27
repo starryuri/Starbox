@@ -26,12 +26,6 @@ import (
 //go:embed payload/starbox.exe
 var payloadExe []byte
 
-//go:embed payload/WebView2Loader.dll
-var payloadDLL []byte
-
-//go:embed payload/config.json
-var payloadCfg []byte
-
 //go:embed payload/unins.exe
 var uninsExe []byte
 
@@ -191,15 +185,6 @@ func install(dir string, startMenu, desktop bool) error {
 	exePath := filepath.Join(dir, "starbox.exe")
 	if err := writeFile(exePath, payloadExe); err != nil {
 		return err
-	}
-	if err := writeFile(filepath.Join(dir, "WebView2Loader.dll"), payloadDLL); err != nil {
-		return err
-	}
-	cfgPath := filepath.Join(dir, "config.json")
-	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		if err := writeFile(cfgPath, payloadCfg); err != nil {
-			return err
-		}
 	}
 	if err := writeFile(filepath.Join(dir, "unins.exe"), uninsExe); err != nil {
 		return err
