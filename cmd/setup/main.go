@@ -87,6 +87,7 @@ var (
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	gdi32    = windows.NewLazySystemDLL("gdi32.dll")
 	shell32  = windows.NewLazySystemDLL("shell32.dll")
+	uxtheme  = windows.NewLazySystemDLL("uxtheme.dll")
 	ole32    = windows.NewLazySystemDLL("ole32.dll")
 
 	pCreateWindowEx = user32.NewProc("CreateWindowExW")
@@ -906,7 +907,7 @@ func main() {
 	hCancel = makeChild("BUTTON", "取消", bsOwnerDraw, IDCancel, 0, 0, 0, 0)
 	hBrowse = makeChild("BUTTON", "浏览…", bsOwnerDraw, IDBrowse, 0, 0, 0, 0)
 	hDirEdit = makeChild("EDIT", installDir, esAutoHScroll, 110, 0, 0, 0, 0)
-	user32.NewProc("SetWindowTheme").Call(hDirEdit, uintptr(unsafe.Pointer(utf16p(""))), uintptr(unsafe.Pointer(utf16p(""))))
+	uxtheme.NewProc("SetWindowTheme").Call(hDirEdit, uintptr(unsafe.Pointer(utf16p(""))), uintptr(unsafe.Pointer(utf16p(""))))
 	setFont(hDirEdit, fontBody)
 	setFont(hBack, fontBtn)
 	setFont(hNext, fontBtn)
