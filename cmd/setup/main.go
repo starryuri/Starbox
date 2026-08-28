@@ -1,12 +1,15 @@
 //go:build windows
 
-// Starbox setup — a native Windows GUI installer (no WebView2, no console).
+// Starbox setup — a professional multi-page native installer wizard.
 //
-//	setup.exe -> native Win32 wizard: pick install dir / start menu / desktop,
-//	            install payload, then a Done screen with "run now" and "finish".
+// Welcome → Options (location/shortcuts/upgrade notice) → Progress (live
+// steps) → Done (launch / finish), dark themed to match the main app.
 //
-// The uninstaller is a separate, standalone binary (unins.exe, cmd/unin) and is
-// deployed by this installer, then invoked from Control Panel / Start Menu.
+// Professional behaviors: existing-install detection (upgrade path with data
+// preservation notice), graceful shutdown of a running STARBOX before file
+// replacement, registry via the native API (no reg.exe shell-outs), last
+// install location remembered, EstimatedSize + DisplayVersion in the
+// uninstall registry entry, per-monitor DPI awareness.
 package main
 
 import (
@@ -18,9 +21,11 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 //go:embed payload/starbox.exe
@@ -30,64 +35,118 @@ var payloadExe []byte
 var uninsExe []byte
 
 const (
-	runKey         = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 	uninstallKey   = `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\STARBOX`
+	appKey         = `HKCU\Software\STARBOX`
+	appVersion     = "1.1.0"
 	createNoWindow = 0x08000000
 )
 
-// ---- Win32 constants ----
+// palette (COLORREF 0x00BBGGRR) — same theme as the main app
+const (
+	colBg    = uintptr(0x20100c) // #0c1020
+	colSide  = uintptr(0x2b1610) // #10162b
+	colCard  = uintptr(0x4a3c20) // #203c4a
+	colCard2 = uintptr(0x60502e)
+	colAcc   = uintptr(0xeed322) // #22d3ee
+	colFg    = uintptr(0xf7ece7)
+	colDim   = uintptr(0x8f8271)
+	colErr   = uintptr(0x6050ff) // #ff5060 soft red
+	colOnAcc = uintptr(0x170e0b)
+)
+
 const (
 	wsOverlappedWindow = 0x00CF0000
 	wsChild            = 0x40000000
 	wsVisible          = 0x10000000
-	wsTabStop          = 0x00010000
-	wsGroup            = 0x00020000
-	ssLeft             = 0x00000000
-	bsPushButton       = 0x00000000
-	bsCheckBox         = 0x00000002
-	bsAutoCheckBox     = 0x00000003
+	bsOwnerDraw        = 0x0000000B
 	esAutoHScroll      = 0x00000080
-	esLeft             = 0x00000000
-	esPassword         = 0x0020
-	colorWindow        = 5
+	dtSingle           = 0x0020
+	dtVCenter          = 0x0004
+	dtCenter           = 0x0001
+	dtWordBreak        = 0x0010
+
+	wmAppStep = 0x8010
+	wmAppDone = 0x8011
+
+	IDBack   = 101
+	IDNext   = 102
+	IDCancel = 103
+	IDBrowse = 104
 )
 
-// Control IDs.
+// pages
 const (
-	IDDirEdit   = 100
-	IDBrowse    = 101
-	IDSMCheck   = 102
-	IDDesktopCh = 103
-	IDInstall   = 104
-	IDRun       = 105
-	IDDone      = 106
-	IDStatus    = 107
-	IDMsgStatic = 108
+	pgWelcome = iota
+	pgOptions
+	pgProgress
+	pgDone
 )
 
 var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	gdi32    = windows.NewLazySystemDLL("gdi32.dll")
+	shell32  = windows.NewLazySystemDLL("shell32.dll")
+	ole32    = windows.NewLazySystemDLL("ole32.dll")
 
-	pCreateWindowEx   = user32.NewProc("CreateWindowExW")
-	pDefWindowProc    = user32.NewProc("DefWindowProcW")
-	pDestroyWindow    = user32.NewProc("DestroyWindow")
-	pRegisterClassEx  = user32.NewProc("RegisterClassExW")
-	pCreateFont       = gdi32.NewProc("CreateFontW")
-	pSendMessage      = user32.NewProc("SendMessageW")
-	pSetWindowText    = user32.NewProc("SetWindowTextW")
-	pSetWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
-	pGetWindowLongPtr = user32.NewProc("GetWindowLongPtrW")
-	pShowWindow       = user32.NewProc("ShowWindow")
-	pUpdateWindow     = user32.NewProc("UpdateWindow")
-	pInvalidateRect   = user32.NewProc("InvalidateRect")
-	pDeleteObject     = gdi32.NewProc("DeleteObject")
-	shell32           = windows.NewLazyDLL("shell32.dll")
-	pBrowse           = shell32.NewProc("SHBrowseForFolderW")
-	pPath             = shell32.NewProc("SHGetPathFromIDListW")
-	ole32             = windows.NewLazyDLL("ole32.dll")
-	pCoTaskMemFree    = ole32.NewProc("CoTaskMemFree")
+	pCreateWindowEx = user32.NewProc("CreateWindowExW")
+	pDefWindowProc  = user32.NewProc("DefWindowProcW")
+	pDestroyWindow  = user32.NewProc("DestroyWindow")
+	pRegisterClass  = user32.NewProc("RegisterClassExW")
+	pSendMessage    = user32.NewProc("SendMessageW")
+	pSetWindowText  = user32.NewProc("SetWindowTextW")
+	pShowWindow     = user32.NewProc("ShowWindow")
+	pUpdateWindow   = user32.NewProc("UpdateWindow")
+	pInvalidateRect = user32.NewProc("InvalidateRect")
+	pMoveWindow     = user32.NewProc("MoveWindow")
+	pGetClientRect  = user32.NewProc("GetClientRect")
+	pBeginPaint     = user32.NewProc("BeginPaint")
+	pEndPaint       = user32.NewProc("EndPaint")
+	pPostQuit       = user32.NewProc("PostQuitMessage")
+	pLoadIcon       = user32.NewProc("LoadIconW")
+	pGetDpiSystem   = user32.NewProc("GetDpiForSystem")
+	pFindWindow     = user32.NewProc("FindWindowW")
+
+	pCreateFont      = gdi32.NewProc("CreateFontW")
+	pCreateSolid     = gdi32.NewProc("CreateSolidBrush")
+	pDeleteObject    = gdi32.NewProc("DeleteObject")
+	pDrawText        = user32.NewProc("DrawTextW")
+	pSetTextColor    = gdi32.NewProc("SetTextColor")
+	pSetBkMode       = gdi32.NewProc("SetBkMode")
+	pSelectObject    = gdi32.NewProc("SelectObject")
+	pCreateCompatDC  = gdi32.NewProc("CreateCompatibleDC")
+	pDeleteDC        = gdi32.NewProc("DeleteDC")
+	pCreateDIB       = gdi32.NewProc("CreateDIBSection")
+	pBitBlt          = gdi32.NewProc("BitBlt")
+
+	pBrowse = shell32.NewProc("SHBrowseForFolderW")
+	pPath   = shell32.NewProc("SHGetPathFromIDListW")
+	pFree   = ole32.NewProc("CoTaskMemFree")
+
+	wndProc = syscall.NewCallback(wndProcMain)
+)
+
+var (
+	hwndMain                   uintptr
+	hInst                      uintptr
+	fontHead, fontBody         uintptr
+	fontSmall, fontBtn         uintptr
+	hBack, hNext, hCancel      uintptr
+	hBrowse                    uintptr
+	hDirEdit                   uintptr
+	page                       = pgWelcome
+	dpiScale                   = 100
+	installDir                 string
+	upgrading                  bool
+	existingVersion            string
+	optStartMenu               = true
+	optDesktop                 = true
+	optLaunch                  = true
+	optErr                     string
+	instBusy                   bool
+	instStep                   int
+	instErr                    string
+	brushBg, brushSide, brushC uintptr
 )
 
 type wndClassEx struct {
@@ -105,261 +164,27 @@ type wndClassEx struct {
 	HIconSm       uintptr
 }
 
-var (
-	hwndMain  uintptr
-	hwndFont  uintptr
-	installed bool
-	// control handles
-	hDirEdit, hBrowseBtn, hSMChk, hDeskChk, hInstallBtn, hRunBtn, hDoneBtn, hStatus, hMsgStatic uintptr
-)
+type rect struct{ Left, Top, Right, Bottom int32 }
 
-var wndProc = syscall.NewCallback(wndProcMain)
-
-func utf16(s string) *uint16 {
-	p, _ := windows.UTF16PtrFromString(s)
-	return p
+type paintStruct struct {
+	HDC      uintptr
+	FErase   uint32
+	RcPaint  rect
+	FRestore uint32
+	FIncUpd  uint32
+	Reserved [32]byte
 }
 
-func setText(h uintptr, s string) {
-	sp, _ := windows.UTF16PtrFromString(s)
-	pSetWindowText.Call(h, uintptr(unsafe.Pointer(sp)))
-}
-
-func getText(h uintptr) string {
-	buf := make([]uint16, 512)
-	n, _, _ := pSendMessage.Call(h, 0x000D /*WM_GETTEXT*/, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
-	return windows.UTF16ToString(buf[:n])
-}
-
-func checkState(h uintptr) bool {
-	r, _, _ := pSendMessage.Call(h, 0x00F0 /*BM_GETCHECK*/, 0, 0) // BST_CHECKED=1
-	return r == 1
-}
-
-// runNoWindow runs a command without flashing a console window.
-func runNoWindow(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
-	return cmd.Run()
-}
-
-func writeFile(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
-}
-
-func defaultDir() string {
-	if d := os.Getenv("LOCALAPPDATA"); d != "" {
-		return filepath.Join(d, "STARBOX")
-	}
-	return filepath.Join(os.Getenv("USERPROFILE"), "STARBOX")
-}
-
-func shortLinkPaths() (sm, desktop string) {
-	sm = filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "STARBOX.lnk")
-	desktop = filepath.Join(os.Getenv("USERPROFILE"), "Desktop", "STARBOX.lnk")
-	return
-}
-
-func shortcut(lnk, target, args, workdir, desc string) {
-	ps := fmt.Sprintf(`$ws=New-Object -ComObject WScript.Shell;$s=$ws.CreateShortcut('%s');$s.TargetPath='%s';$s.Arguments='%s';$s.WorkingDirectory='%s';$s.Description='%s';$s.Save()`,
-		strings.ReplaceAll(lnk, "'", "''"), strings.ReplaceAll(target, "'", "''"),
-		strings.ReplaceAll(args, "'", "''"), strings.ReplaceAll(workdir, "'", "''"), strings.ReplaceAll(desc, "'", "''"))
-	_ = runNoWindow("powershell", "-NoProfile", "-Command", ps)
-}
-
-func reg(args ...string) error {
-	return runNoWindow("reg", args...)
-}
-
-// install copies the payload to dir and wires shortcuts + uninstall registry.
-func install(dir string, startMenu, desktop bool) error {
-	if dir == "" {
-		dir = defaultDir()
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	exePath := filepath.Join(dir, "starbox.exe")
-	if err := writeFile(exePath, payloadExe); err != nil {
-		return err
-	}
-	if err := writeFile(filepath.Join(dir, "unins.exe"), uninsExe); err != nil {
-		return err
-	}
-	if startMenu {
-		sm, _ := shortLinkPaths()
-		shortcut(sm, exePath, "", dir, "STARBOX · 你的次元 · 收于一匣")
-		shortcut(filepath.Join(filepath.Dir(sm), "卸载 STARBOX.lnk"), filepath.Join(dir, "unins.exe"), "", dir, "卸载 STARBOX")
-	}
-	if desktop {
-		_, dd := shortLinkPaths()
-		shortcut(dd, exePath, "", dir, "STARBOX · 你的次元 · 收于一匣")
-	}
-	unins := filepath.Join(dir, "unins.exe")
-	kv := func(k, ty, v string) {
-		_ = reg("add", uninstallKey, "/v", k, "/t", ty, "/d", v, "/f")
-	}
-	kv("DisplayName", "REG_SZ", "STARBOX")
-	kv("DisplayVersion", "REG_SZ", "1.0.0")
-	kv("Publisher", "REG_SZ", "starryuri")
-	kv("InstallLocation", "REG_SZ", dir)
-	kv("UninstallString", "REG_SZ", fmt.Sprintf(`"%s"`, unins))
-	kv("DisplayIcon", "REG_SZ", exePath)
-	kv("NoModify", "REG_DWORD", "1")
-	kv("NoRepair", "REG_DWORD", "1")
-	return nil
-}
-
-func pickFolder() string {
-	title, _ := windows.UTF16PtrFromString("选择安装位置")
-	bi := struct {
-		HwndOwner      uintptr
-		PidlRoot       uintptr
-		PszDisplayName uintptr
-		LpszTitle      *uint16
-		UlFlags        uint32
-		Lpfn           uintptr
-		LParam         uintptr
-		IImage         int32
-	}{HwndOwner: hwndMain, PidlRoot: 0, PszDisplayName: 0, LpszTitle: title, UlFlags: 0x1 | 0x40, Lpfn: 0, LParam: 0, IImage: 0}
-	r, _, _ := pBrowse.Call(uintptr(unsafe.Pointer(&bi)))
-	if r == 0 {
-		return ""
-	}
-	defer pCoTaskMemFree.Call(r)
-	var buf [windows.MAX_PATH]uint16
-	if ok, _, _ := pPath.Call(r, uintptr(unsafe.Pointer(&buf[0]))); ok == 0 {
-		return ""
-	}
-	return windows.UTF16ToString(buf[:])
-}
-
-func createWin32Font(size int, bold bool) uintptr {
-	const (
-		fwNormal       = 400
-		fwBold         = 700
-		defaultCharset = 1
-		outDefault     = 0
-		clipDefault    = 0
-		antialias      = 5
-	)
-	w := uintptr(fwNormal)
-	if bold {
-		w = fwBold
-	}
-	// MS YaHei for CJK; falls back to system default if unavailable.
-	h, _, _ := pCreateFont.Call(uintptr(size), 0, 0, 0, w, 0, 0, 0, defaultCharset, outDefault, clipDefault, antialias, 0, uintptr(unsafe.Pointer(utf16("Microsoft YaHei"))), 0)
-	return h
-}
-
-func createChild(class string, text string, style uint32, id int, x, y, w, h int) uintptr {
-	r, _, _ := pCreateWindowEx.Call(0,
-		uintptr(unsafe.Pointer(utf16(class))),
-		uintptr(unsafe.Pointer(utf16(text))),
-		uintptr(wsChild|wsVisible|style),
-		uintptr(x), uintptr(y), uintptr(w), uintptr(h),
-		hwndMain,
-		uintptr(id),
-		0,
-		0)
-	if id != 0 {
-		// send WM_SETFONT so controls use our CJK-capable font
-		pSendMessage.Call(r, 0x0030 /*WM_SETFONT*/, hwndFont, 1)
-	}
-	return r
-}
-
-func setStatus(text string) {
-	setText(hStatus, text)
-	pInvalidateRect.Call(hwndMain, 0, 1)
-}
-
-func enterDoneState() {
-	// Hide install controls, show done controls.
-	pShowWindow.Call(hDirEdit, 0)
-	pShowWindow.Call(hBrowseBtn, 0)
-	pShowWindow.Call(hSMChk, 0)
-	pShowWindow.Call(hDeskChk, 0)
-	pShowWindow.Call(hInstallBtn, 0)
-	pShowWindow.Call(hMsgStatic, 1)
-	pShowWindow.Call(hRunBtn, 1)
-	pShowWindow.Call(hDoneBtn, 1)
-	setText(hMsgStatic, "安装完成！")
-	setStatus(filepath.Dir(getText(hDirEdit)))
-	pUpdateWindow.Call(hwndMain)
-}
-
-func doInstall() {
-	dir := strings.TrimSpace(getText(hDirEdit))
-	if dir == "" {
-		dir = defaultDir()
-		setText(hDirEdit, dir)
-	}
-	setStatus("正在安装…")
-	pShowWindow.Call(hInstallBtn, 0)
-	go func() {
-		err := install(dir, checkState(hSMChk), checkState(hDeskChk))
-		if err != nil {
-			pShowWindow.Call(hInstallBtn, 1)
-			setStatus("安装失败：" + err.Error())
-			return
-		}
-		setStatus("安装完成")
-		enterDoneState()
-	}()
-}
-
-func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintptr {
-	switch msg {
-	case 0x0111: // WM_COMMAND
-		id := uintptr(0xFFFF) & wParam
-		switch id {
-		case IDBrowse:
-			if p := pickFolder(); p != "" {
-				setText(hDirEdit, p)
-			}
-			return 0
-		case IDInstall:
-			doInstall()
-			return 0
-		case IDRun:
-			dir := strings.TrimSpace(getText(hDirEdit))
-			if dir == "" {
-				dir = defaultDir()
-			}
-			exe := filepath.Join(dir, "starbox.exe")
-			if _, err := os.Stat(exe); err == nil {
-				_ = exec.Command(exe, "-desktop").Start()
-			}
-			pDestroyWindow.Call(hwndMain)
-			return 0
-		case IDDone:
-			pDestroyWindow.Call(hwndMain)
-			return 0
-		}
-	case 0x0010: // WM_CLOSE
-		pDestroyWindow.Call(hwnd)
-		return 0
-	case 0x0002: // WM_DESTROY
-		if hwndFont != 0 {
-			pDeleteObject.Call(hwndFont)
-		}
-		postQuitMessage()
-		return 0
-	}
-	r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
-	return r
-}
-
-var (
-	pPostQuitMessage = user32.NewProc("PostQuitMessage")
-)
-
-func postQuitMessage() {
-	pPostQuitMessage.Call(0)
+type drawItemStruct struct {
+	CtlType   uint32
+	CtlID     uint32
+	ItemID    uint32
+	ItemAction uint32
+	ItemState uint32
+	HwndItem  uintptr
+	HDC       uintptr
+	RcItem    rect
+	ItemData  uintptr
 }
 
 type msgStruct struct {
@@ -372,68 +197,726 @@ type msgStruct struct {
 	ptY     int32
 }
 
-func curIcon(hInst uintptr) uintptr {
-	r, _, _ := user32.NewProc("LoadIconW").Call(hInst, 1)
-	if r == 0 {
-		r, _, _ = user32.NewProc("LoadIconW").Call(0, 32512)
+func utf16p(s string) *uint16 { p, _ := windows.UTF16PtrFromString(s); return p }
+
+func scale(n int) int {
+	if dpiScale <= 100 || dpiScale > 500 {
+		return n
 	}
+	return n * dpiScale / 100
+}
+
+func makeFont(px int, bold bool) uintptr {
+	w := uintptr(400)
+	if bold {
+		w = 700
+	}
+	h, _, _ := pCreateFont.Call(uintptr(px), 0, 0, 0, w, 0, 0, 0, 1, 0, 0, 5, 0,
+		uintptr(unsafe.Pointer(utf16p("Microsoft YaHei UI"))), 0)
+	return h
+}
+
+func setFont(h, f uintptr) {
+	if h != 0 {
+		pSendMessage.Call(h, 0x0030 /*WM_SETFONT*/, f, 1)
+	}
+}
+
+func makeChild(class, text string, style uint32, id, x, y, w, h int) uintptr {
+	r, _, _ := pCreateWindowEx.Call(0,
+		uintptr(unsafe.Pointer(utf16p(class))),
+		uintptr(unsafe.Pointer(utf16p(text))),
+		uintptr(wsChild|wsVisible|style),
+		uintptr(x), uintptr(y), uintptr(w), uintptr(h),
+		hwndMain, uintptr(id), hInst, 0)
 	return r
 }
 
+func fillRect(dc uintptr, x, y, w, h int, color uintptr) {
+	if w <= 0 || h <= 0 {
+		return
+	}
+	rc := rect{int32(x), int32(y), int32(x + w), int32(y + h)}
+	br, _, _ := pCreateSolid.Call(color)
+	user32.NewProc("FillRect").Call(dc, uintptr(unsafe.Pointer(&rc)), br)
+	pDeleteObject.Call(br)
+}
+
+func drawText(dc uintptr, x, y, w, h int, text string, font uintptr, color uintptr, flags uintptr) {
+	if w <= 0 || h <= 0 {
+		return
+	}
+	if font != 0 {
+		pSelectObject.Call(dc, font)
+	}
+	pSetBkMode.Call(dc, 1)
+	pSetTextColor.Call(dc, color)
+	rc := rect{int32(x), int32(y), int32(x + w), int32(y + h)}
+	tp, _ := windows.UTF16PtrFromString(text)
+	pDrawText.Call(dc, uintptr(unsafe.Pointer(tp)), uintptr(0xFFFFFFFF), uintptr(unsafe.Pointer(&rc)), flags)
+}
+
+func clientSize() (int, int) {
+	var rc rect
+	pGetClientRect.Call(hwndMain, uintptr(unsafe.Pointer(&rc)))
+	return int(rc.Right), int(rc.Bottom)
+}
+
+func defaultDir() string {
+	if d := os.Getenv("LOCALAPPDATA"); d != "" {
+		return filepath.Join(d, "STARBOX")
+	}
+	return filepath.Join(os.Getenv("USERPROFILE"), "STARBOX")
+}
+
+// ---------- registry helpers (native API — no reg.exe shell-outs) ----------
+
+func regGet(key, name string) string {
+	k, err := registry.OpenKey(registry.CURRENT_USER, key, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+	v, _, err := k.GetStringValue(name)
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
+func regSetString(key, name, value string) error {
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, key, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	return k.SetStringValue(name, value)
+}
+
+func regSetDWORD(key, name string, v uint32) error {
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, key, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	return k.SetDWordValue(name, v)
+}
+
+func regDeleteValue(key, name string) {
+	k, err := registry.OpenKey(registry.CURRENT_USER, key, registry.SET_VALUE)
+	if err != nil {
+		return
+	}
+	defer k.Close()
+	_ = k.DeleteValue(name)
+}
+
+// ---------- running-app shutdown ----------
+
+func killRunningApp() {
+	// graceful first: ask the main window to close
+	cls := utf16p("STARBOXMainWnd")
+	if h, _, _ := pFindWindow.Call(uintptr(unsafe.Pointer(cls)), 0); h != 0 {
+		user32.NewProc("PostMessageW").Call(h, 0x0010 /*WM_CLOSE*/, 0, 0)
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if h2, _, _ := pFindWindow.Call(uintptr(unsafe.Pointer(cls)), 0); h2 == 0 {
+				return
+			}
+			time.Sleep(150 * time.Millisecond)
+		}
+	}
+	// force fallback
+	cmd := exec.Command("taskkill", "/IM", "starbox.exe", "/F")
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+	_ = cmd.Run()
+}
+
+// ---------- install steps ----------
+
+var installSteps = []string{
+	"结束运行中的 STARBOX",
+	"写入程序文件",
+	"创建快捷方式",
+	"写入注册表信息",
+	"完成配置",
+}
+
+func setStep(i int) {
+	instStep = i
+	if hwndMain != 0 {
+		user32.NewProc("PostMessageW").Call(hwndMain, wmAppStep, uintptr(i), 0)
+	}
+}
+
+func shortcut(lnk, target, workdir, desc string) error {
+	ps := fmt.Sprintf(`$ws=New-Object -ComObject WScript.Shell;$s=$ws.CreateShortcut('%s');$s.TargetPath='%s';$s.WorkingDirectory='%s';$s.Description='%s';$s.Save()`,
+		strings.ReplaceAll(lnk, "'", "''"), strings.ReplaceAll(target, "'", "''"),
+		strings.ReplaceAll(workdir, "'", "''"), strings.ReplaceAll(desc, "'", "''"))
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", ps)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+	return cmd.Run()
+}
+
+func startInstall() {
+	instBusy = true
+	instErr = ""
+	go func() {
+		fail := func(err error) {
+			instErr = err.Error()
+			instBusy = false
+			user32.NewProc("PostMessageW").Call(hwndMain, wmAppStep, uintptr(len(installSteps)), 0)
+		}
+		setStep(0)
+		killRunningApp()
+
+		setStep(1)
+		if err := os.MkdirAll(installDir, 0o755); err != nil {
+			fail(err)
+			return
+		}
+		exePath := filepath.Join(installDir, "starbox.exe")
+		if err := os.WriteFile(exePath, payloadExe, 0o644); err != nil {
+			fail(err)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(installDir, "unins.exe"), uninsExe, 0o644); err != nil {
+			fail(err)
+			return
+		}
+		_ = os.WriteFile(filepath.Join(installDir, "version.txt"), []byte(appVersion), 0o644)
+
+		setStep(2)
+		if optStartMenu {
+			folder := filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "STARBOX")
+			_ = os.MkdirAll(folder, 0o755)
+			if err := shortcut(filepath.Join(folder, "STARBOX.lnk"), exePath, installDir, "星匣 STARBOX · 你的次元 · 收于一匣"); err != nil {
+				fail(err)
+				return
+			}
+			if err := shortcut(filepath.Join(folder, "卸载 STARBOX.lnk"), filepath.Join(installDir, "unins.exe"), installDir, "卸载 STARBOX"); err != nil {
+				fail(err)
+				return
+			}
+		}
+		if optDesktop {
+			dd := filepath.Join(os.Getenv("USERPROFILE"), "Desktop", "STARBOX.lnk")
+			if err := shortcut(dd, exePath, installDir, "星匣 STARBOX · 你的次元 · 收于一匣"); err != nil {
+				fail(err)
+				return
+			}
+		}
+
+		setStep(3)
+		sizeKB := uint32((len(payloadExe) + len(uninsExe)) / 1024)
+		_ = regSetString(uninstallKey, "DisplayName", "STARBOX")
+		_ = regSetString(uninstallKey, "DisplayVersion", appVersion)
+		_ = regSetString(uninstallKey, "Publisher", "starryuri")
+		_ = regSetString(uninstallKey, "InstallLocation", installDir)
+		_ = regSetString(uninstallKey, "UninstallString", `"`+filepath.Join(installDir, "unins.exe")+`"`)
+		_ = regSetString(uninstallKey, "DisplayIcon", filepath.Join(installDir, "starbox.exe"))
+		_ = regSetDWORD(uninstallKey, "NoModify", 1)
+		_ = regSetDWORD(uninstallKey, "NoRepair", 1)
+		_ = regSetDWORD(uninstallKey, "EstimatedSize", sizeKB)
+		_ = regSetString(appKey, "InstallLocation", installDir)
+		_ = regSetString(appKey, "Version", appVersion)
+
+		setStep(4)
+		time.Sleep(250 * time.Millisecond)
+		instBusy = false
+		user32.NewProc("PostMessageW").Call(hwndMain, wmAppDone, 0, 0)
+	}()
+}
+
+// ---------- page navigation ----------
+
+func goPage(p int) {
+	page = p
+	layoutButtons()
+	pInvalidateRect.Call(hwndMain, 0, 1)
+	pUpdateWindow.Call(hwndMain)
+}
+
+func onNext() {
+	switch page {
+	case pgWelcome:
+		goPage(pgOptions)
+	case pgOptions:
+		d := strings.TrimSpace(getEdit())
+		d = strings.Trim(d, `"`)
+		if d == "" {
+			optErr = "请填写安装位置"
+			pInvalidateRect.Call(hwndMain, 0, 1)
+			return
+		}
+		if vol := filepath.VolumeName(d) + `\`; vol == d {
+			optErr = "不能选择盘符根目录"
+			pInvalidateRect.Call(hwndMain, 0, 1)
+			return
+		}
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			optErr = "无法创建目录：" + err.Error()
+			pInvalidateRect.Call(hwndMain, 0, 1)
+			return
+		}
+		optErr = ""
+		installDir = d
+		if !upgrading {
+			if _, err := os.Stat(filepath.Join(d, "starbox.exe")); err == nil {
+				upgrading = true // installing over an existing copy
+			}
+		}
+		goPage(pgProgress)
+		startInstall()
+	case pgDone:
+		if optLaunch {
+			exe := filepath.Join(installDir, "starbox.exe")
+			if _, err := os.Stat(exe); err == nil {
+				cmd := exec.Command(exe)
+				cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+				_ = cmd.Start()
+			}
+		}
+		pDestroyWindow.Call(hwndMain)
+	}
+}
+
+func onBack() {
+	if page == pgOptions {
+		goPage(pgWelcome)
+	}
+}
+
+func getEdit() string {
+	buf := make([]uint16, 512)
+	n, _, _ := pSendMessage.Call(hDirEdit, 0x000D /*WM_GETTEXT*/, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
+	return windows.UTF16ToString(buf[:n])
+}
+
+func setEdit(s string) {
+	sp, _ := windows.UTF16PtrFromString(s)
+	pSetWindowText.Call(hDirEdit, uintptr(unsafe.Pointer(sp)))
+}
+
+// ---------- button visibility / labels per page ----------
+
+func layoutButtons() {
+	back := page == pgOptions
+	nextLabel := "下一步"
+	cancel := page == pgWelcome || page == pgOptions
+	switch page {
+	case pgOptions:
+		nextLabel = "安装"
+	case pgDone:
+		nextLabel = "完成"
+	case pgProgress:
+		nextLabel = "安装中…"
+	}
+	pShowWindow.Call(hBack, boolVis(back))
+	pShowWindow.Call(hCancel, boolVis(cancel && !instBusy))
+	pShowWindow.Call(hBrowse, boolVis(page == pgOptions))
+	pShowWindow.Call(hDirEdit, boolVis(page == pgOptions))
+	setText(hNext, nextLabel)
+	// position the row
+	w, h := clientSize()
+	bw, bh := scale(118), scale(42)
+	y := h - scale(30) - bh
+	pMoveWindow.Call(hNext, uintptr(w-scale(24)-bw), uintptr(y), uintptr(bw), uintptr(bh), 1)
+	pMoveWindow.Call(hBack, uintptr(w-scale(24)-2*bw-scale(10)), uintptr(y), uintptr(bw), uintptr(bh), 1)
+	pMoveWindow.Call(hCancel, uintptr(scale(24)), uintptr(y), uintptr(bw), uintptr(bh), 1)
+	pMoveWindow.Call(hBrowse, uintptr(w-scale(24)-scale(96)), uintptr(y-scale(50)), uintptr(scale(96)), uintptr(scale(38)), 1)
+}
+
+func boolVis(b bool) uintptr {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func setText(h uintptr, s string) {
+	sp, _ := windows.UTF16PtrFromString(s)
+	pSetWindowText.Call(h, uintptr(unsafe.Pointer(sp)))
+}
+
+// ---------- painting ----------
+
+func paintPage(dc uintptr, w, h int) {
+	contentY := scale(104)
+	contentH := h - scale(84) - contentY
+	x := scale(28)
+	cw := w - 2*x
+
+	// per-page content
+	switch page {
+	case pgWelcome:
+		drawText(dc, x, contentY+scale(16), cw, scale(44), "欢迎使用 星匣 STARBOX 安装向导", fontHead, colFg, dtSingle)
+		drawText(dc, x, contentY+scale(78), cw, contentH-scale(90),
+			"本向导将把 STARBOX 安装到你的电脑。\n\n"+
+				"· 番剧、收藏、订阅全部数据保存在本地\n"+
+				"· 随时可在「设置 → 应用」中卸载，并可选择保留数据\n"+
+				"· 安装过程不会写入任何注册表垃圾项\n\n"+
+				"点击「下一步」继续。", fontBody, colDim, 0)
+	case pgOptions:
+		drawText(dc, x, contentY+scale(8), cw, scale(30), "选择安装位置", fontBody, colFg, dtSingle)
+		// edit frame (edit sits inside)
+		fillRect(dc, x, contentY+scale(48), cw-scale(106), scale(42), colCard)
+		// upgrade notice
+		if upgrading {
+			noteY := contentY + scale(112)
+			fillRect(dc, x, noteY, cw, scale(58), colSide)
+			fillRectColor := uintptr(colAcc)
+			_ = fillRectColor
+			drawText(dc, x+scale(10), noteY+scale(8), cw-scale(20), scale(44),
+				"检测到已安装的 STARBOX（版本 "+orDash(existingVersion)+"）。将原地升级，你的数据会完整保留。",
+				fontSmall, colAcc, 0x0025) // single|vcenter
+		}
+		// option checkboxes
+		cbY := contentY + scale(186)
+		drawCheck(dc, x, cbY, scale(22), "创建开始菜单快捷方式", &optStartMenu)
+		drawCheck(dc, x, cbY+scale(40), scale(22), "创建桌面快捷方式", &optDesktop)
+		if optErr != "" {
+			drawText(dc, x, contentY+scale(146), cw, scale(26), optErr, fontSmall, colErr, dtSingle)
+		} else if !upgrading {
+			drawText(dc, x, contentY+scale(146), cw, scale(26), "全新安装 — 默认安装到 %LOCALAPPDATA%\\STARBOX", fontSmall, colDim, dtSingle)
+		}
+	case pgProgress:
+		drawText(dc, x, contentY+scale(8), cw, scale(34), "正在安装 STARBOX…", fontBody, colFg, dtSingle)
+		// step list
+		sy := contentY + scale(56)
+		for i, s := range installSteps {
+			glyph, color := "○", colDim
+			if i < instStep || instErr != "" && i < instStep {
+				glyph, color = "✓", colAcc
+			} else if i == instStep && instErr == "" {
+				glyph, color = "●", colAcc
+			}
+			drawText(dc, x, sy+i*scale(34), scale(28), scale(28), glyph, fontBody, color, dtCenter)
+			txtCol := uintptr(colFg)
+			if i > instStep {
+				txtCol = colDim
+			}
+			drawText(dc, x+scale(36), sy+i*scale(34), cw-scale(36), scale(28), s, fontSmall, txtCol, 0x0025)
+		}
+		// progress bar
+		barY := contentY + contentH - scale(56)
+		fillRect(dc, x, barY, cw, scale(10), colCard)
+		done := instStep * 100 / len(installSteps)
+		if instErr != "" {
+			drawText(dc, x, barY+scale(18), cw, scale(26), "安装失败："+instErr, fontSmall, colErr, 0)
+			drawText(dc, x, contentY+scale(8), cw, scale(34), "安装遇到问题", fontBody, colFg, dtSingle)
+		} else if done > 0 {
+			fillRect(dc, x, barY, cw*done/100, scale(10), colAcc)
+		}
+	case pgDone:
+		drawText(dc, x, contentY+scale(16), cw, scale(44), "安装完成！", fontHead, colAcc, dtSingle)
+		drawText(dc, x, contentY+scale(80), cw, scale(30), "STARBOX "+appVersion+" 已安装到：", fontBody, colFg, dtSingle)
+		drawText(dc, x, contentY+scale(112), cw, scale(30), installDir, fontSmall, colDim, 0x00000800|dtSingle) // path ellipsis
+		cbY := contentY + scale(164)
+		drawCheck(dc, x, cbY, scale(22), "安装完成后启动 STARBOX", &optLaunch)
+		drawText(dc, x, cbY+scale(46), cw, scale(56),
+			"随时可以从开始菜单或「设置 → 应用」中卸载 STARBOX。\n卸载时可以选择保留你的全部数据。", fontSmall, colDim, 0)
+	}
+}
+
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "未知版本"
+	}
+	return s
+}
+
+// custom checkbox
+func drawCheck(dc uintptr, x, y, size int, text string, val *bool) {
+	fillRect(dc, x, y, size, size, colCard)
+	if val != nil && *val {
+		inner := size * 4 / 10
+		fillRect(dc, x+inner/2, y+inner/2, size-inner, size-inner, colAcc)
+	}
+	drawText(dc, x+size+scale(12), y, 600, size, text, fontBody, colFg, 0x0025)
+}
+
+func hitCheck(x, y int) {
+	if page != pgOptions && page != pgDone {
+		return
+	}
+	size := scale(22)
+	var boxes []struct {
+		bx, by int
+		val    *bool
+	}
+	if page == pgOptions {
+		_, h := clientSize()
+		contentY := scale(104)
+		_ = h
+		cbY := contentY + scale(186)
+		boxes = append(boxes,
+			struct {
+				bx, by int
+				val    *bool
+			}{scale(28), cbY, &optStartMenu},
+			struct {
+				bx, by int
+				val    *bool
+			}{scale(28), cbY + scale(40), &optDesktop},
+		)
+	} else {
+		_, h := clientSize()
+		cbY := scale(104) + scale(164)
+		_ = h
+		boxes = append(boxes, struct {
+			bx, by int
+			val    *bool
+		}{scale(28), cbY, &optLaunch})
+	}
+	for _, b := range boxes {
+		if x >= b.bx && x <= b.bx+size+600 && y >= b.by && y <= b.by+size {
+			*b.val = !*b.val
+			pInvalidateRect.Call(hwndMain, 0, 1)
+			return
+		}
+	}
+}
+
+// ---------- banner / footer ----------
+
+func paintChrome(dc uintptr, w, h int) {
+	// banner
+	bh := scale(92)
+	fillRect(dc, 0, 0, w, bh, colSide)
+	fillRect(dc, 0, bh-scale(3), w, scale(3), colAcc)
+	drawText(dc, scale(28), scale(16), w-scale(56), scale(40), "星匣 STARBOX", fontHead, colFg, dtSingle)
+	sub := "安装向导 · 版本 " + appVersion
+	if page == pgProgress && instBusy {
+		sub = "正在安装，请稍候…"
+	}
+	drawText(dc, scale(28), scale(56), w-scale(56), scale(26), sub, fontSmall, colDim, dtSingle)
+	// footer separator
+	fy := h - scale(84)
+	fillRect(dc, 0, fy, w, scale(1), colCard2)
+	// content bg
+	fillRect(dc, 0, bh, w, fy-bh, colBg)
+}
+
+// ---------- wndProc ----------
+
+func wndProcMain(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+	switch msg {
+	case 0x0111: // WM_COMMAND
+		switch uintptr(0xFFFF) & wParam {
+		case IDNext:
+			onNext()
+			return 0
+		case IDBack:
+			onBack()
+			return 0
+		case IDCancel:
+			if !instBusy {
+				pDestroyWindow.Call(hwnd)
+			}
+			return 0
+		case IDBrowse:
+			if p := browseFolder(); p != "" {
+				setEdit(p)
+				upgrading = false
+				if _, err := os.Stat(filepath.Join(p, "starbox.exe")); err == nil {
+					upgrading = true
+				}
+				pInvalidateRect.Call(hwndMain, 0, 1)
+			}
+			return 0
+		}
+	case 0x0202: // WM_LBUTTONUP
+		x := int(int16(uint16(lParam & 0xFFFF)))
+		y := int(int16(uint16((lParam >> 16) & 0xFFFF)))
+		hitCheck(x, y)
+		return 0
+	case 0x0100: // WM_KEYDOWN
+		switch wParam {
+		case 0x0D: // Enter
+			if !instBusy {
+				onNext()
+			}
+			return 0
+		case 0x1B: // Esc
+			if !instBusy {
+				pDestroyWindow.Call(hwnd)
+			}
+			return 0
+		}
+	case wmAppStep, wmAppDone:
+		if msg == wmAppDone {
+			page = pgDone
+			layoutButtons()
+		}
+		pInvalidateRect.Call(hwnd, 0, 1)
+		return 0
+	case 0x000F: // WM_PAINT
+		var ps paintStruct
+		dc, _, _ := pBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
+		if dc != 0 {
+			w, h := clientSize()
+			mem, _, _ := pCreateCompatDC.Call(dc)
+			if mem != 0 {
+				var bi struct {
+					Size       uint32
+					Width      int32
+					Height     int32
+					Planes     uint16
+					BitCount   uint16
+					Compression uint32
+					SizeImage  uint32
+					XPpm       int32
+					YPpm       int32
+					ClrUsed    uint32
+					ClrImp     uint32
+				}
+				bi.Size = 40
+				bi.Width = int32(w)
+				bi.Height = int32(-h)
+				bi.Planes = 1
+				bi.BitCount = 32
+				var bits *byte
+				bmp, _, _ := pCreateDIB.Call(mem, uintptr(unsafe.Pointer(&bi)), 0, uintptr(unsafe.Pointer(&bits)), 0, 0)
+				if bmp != 0 && bits != nil {
+					old, _, _ := pSelectObject.Call(mem, bmp)
+					fillRect(mem, 0, 0, w, h, colBg)
+					paintChrome(mem, w, h)
+					paintPage(mem, w, h)
+					pBitBlt.Call(dc, 0, 0, uintptr(w), uintptr(h), mem, 0, 0, 0x00CC0020)
+					pSelectObject.Call(mem, old)
+					pDeleteObject.Call(bmp)
+				}
+				pDeleteDC.Call(mem)
+			}
+			pEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
+		}
+		return 0
+	case 0x0134: // WM_CTLCOLOREDIT — dark edit
+		pSetTextColor.Call(wParam, colFg)
+		pSetBkMode.Call(wParam, 0)
+		pSetBkMode2(wParam)
+		return brushC
+	case 0x0138: // WM_CTLCOLORBTN
+		return brushBg
+	case 0x0005: // WM_SIZE
+		layoutButtons()
+		r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
+		return r
+	case 0x0010: // WM_CLOSE
+		if !instBusy {
+			pDestroyWindow.Call(hwnd)
+		}
+		return 0
+	case 0x0002: // WM_DESTROY
+		pPostQuit.Call(0)
+		return 0
+	}
+	r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
+	return r
+}
+
+func pSetBkMode2(dc uintptr) {
+	pSetBkMode.Call(dc, 0)
+}
+
+// ---------- browse ----------
+
+func browseFolder() string {
+	title := utf16p("选择安装位置")
+	bi := struct {
+		HwndOwner uintptr
+		PidlRoot  uintptr
+		Disp      uintptr
+		Title     *uint16
+		Flags     uint32
+		Callback  uintptr
+		Param     uintptr
+		Image     int32
+	}{hwndMain, 0, 0, title, 0x1 | 0x40, 0, 0, 0}
+	r, _, _ := pBrowse.Call(uintptr(unsafe.Pointer(&bi)))
+	if r == 0 {
+		return ""
+	}
+	defer pFree.Call(r)
+	var buf [260]uint16
+	if ok, _, _ := pPath.Call(r, uintptr(unsafe.Pointer(&buf[0]))); ok == 0 {
+		return ""
+	}
+	return windows.UTF16ToString(buf[:])
+}
+
+// ---------- main ----------
+
 func main() {
 	runtime.LockOSThread()
-	_, _, _ = user32.NewProc("SetProcessDPIAware").Call()
+	user32.NewProc("SetProcessDPIAware").Call()
+	user32.NewProc("SetThreadDpiAwarenessContext").Call(^uintptr(3))
+	if r, _, _ := pGetDpiSystem.Call(); r != 0 {
+		dpiScale = int(r) * 100 / 96
+	}
 
-	// Get instance/module handle.
 	mod, _, _ := kernel32.NewProc("GetModuleHandleW").Call(0)
-	hInst := mod
+	hInst = mod
 
-	clsName := utf16("STARBOXSetupWnd")
+	brushBg, _, _ = pCreateSolid.Call(colBg)
+	brushSide, _, _ = pCreateSolid.Call(colSide)
+	brushC, _, _ = pCreateSolid.Call(colCard)
+
+	// remembered location → upgrade detection
+	installDir = regGet(appKey, "InstallLocation")
+	if installDir == "" {
+		installDir = regGet(uninstallKey, "InstallLocation")
+	}
+	if installDir != "" {
+		upgrading = true
+		existingVersion = regGet(uninstallKey, "DisplayVersion")
+	} else {
+		installDir = defaultDir()
+	}
+
+	clsName := utf16p("STARBOXSetupWnd")
 	wc := wndClassEx{
 		Size:          uint32(unsafe.Sizeof(wndClassEx{})),
-		Style:         0,
 		WndProc:       wndProc,
 		HInstance:     hInst,
 		HIcon:         curIcon(hInst),
 		HCursor:       0,
-		HbrBackground: uintptr(colorWindow + 1),
+		HbrBackground: brushBg,
 		ClassName:     clsName,
 	}
-	pRegisterClassEx.Call(uintptr(unsafe.Pointer(&wc)))
+	pRegisterClass.Call(uintptr(unsafe.Pointer(&wc)))
 
+	ww, wh := scale(660), scale(460)
 	hwndMain, _, _ = pCreateWindowEx.Call(0,
 		uintptr(unsafe.Pointer(clsName)),
-		uintptr(unsafe.Pointer(utf16("星匣 STARBOX 安装器"))),
-		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 720, 600, // CW_USEDEFAULT
+		uintptr(unsafe.Pointer(utf16p("星匣 STARBOX 安装向导"))),
+		uintptr(wsOverlappedWindow&^0x00030000&^0x00040000), // no maximize/resize (thick frame kept for moving)
+		0x80000000, 0x80000000, uintptr(ww), uintptr(wh),
 		0, 0, hInst, 0)
+	user32.NewProc("SetWindowLongPtrW").Call(hwndMain, ^uintptr(20), uintptr(uint32(0x00000480))) // GWL_STYLE: dialog-frame
 
-	hwndFont = createWin32Font(21, false)
-	// Title static
-	hMsgStatic = createChild("STATIC", "安装 STARBOX", ssLeft, IDMsgStatic, 24, 34, 672, 30)
-	// Install dir row
-	createChild("STATIC", "安装位置:", ssLeft, 0, 24, 96, 100, 26)
-	hDirEdit = createChild("EDIT", defaultDir(), wsTabStop, IDDirEdit, 124, 92, 380, 34)
-	hBrowseBtn = createChild("BUTTON", "浏览…", bsPushButton, IDBrowse, 514, 90, 110, 36)
-	// Options
-	hSMChk = createChild("BUTTON", "创建开始菜单快捷方式", bsAutoCheckBox, IDSMCheck, 24, 152, 420, 30)
-	pSendMessage.Call(hSMChk, 0x00F1 /*BM_SETCHECK*/, 1, 0)
-	hDeskChk = createChild("BUTTON", "创建桌面快捷方式", bsAutoCheckBox, IDDesktopCh, 24, 188, 420, 30)
-	pSendMessage.Call(hDeskChk, 0x00F1, 1, 0)
-	// Install button
-	hInstallBtn = createChild("BUTTON", "安装", bsPushButton, IDInstall, 24, 252, 150, 44)
-	// Status
-	hStatus = createChild("STATIC", "", ssLeft, IDStatus, 24, 324, 672, 48)
-	// Done controls (hidden initially)
-	hRunBtn = createChild("BUTTON", "立即运行 STARBOX", bsPushButton, IDRun, 24, 252, 200, 44)
-	hDoneBtn = createChild("BUTTON", "完成", bsPushButton, IDDone, 240, 252, 120, 44)
-	pShowWindow.Call(hRunBtn, 0)
-	pShowWindow.Call(hDoneBtn, 0)
+	fontHead = makeFont(scale(24), true)
+	fontBody = makeFont(scale(16), false)
+	fontSmall = makeFont(scale(13), false)
+	fontBtn = makeFont(scale(15), false)
 
-	pShowWindow.Call(hwndMain, 5) // SW_SHOW
+	hBack = makeChild("BUTTON", "上一步", bsOwnerDraw, IDBack, 0, 0, 0, 0)
+	hNext = makeChild("BUTTON", "下一步", bsOwnerDraw, IDNext, 0, 0, 0, 0)
+	hCancel = makeChild("BUTTON", "取消", bsOwnerDraw, IDCancel, 0, 0, 0, 0)
+	hBrowse = makeChild("BUTTON", "浏览…", bsOwnerDraw, IDBrowse, 0, 0, 0, 0)
+	hDirEdit = makeChild("EDIT", installDir, esAutoHScroll, 110, 0, 0, 0, 0)
+	user32.NewProc("SetWindowTheme").Call(hDirEdit, uintptr(unsafe.Pointer(utf16p(""))), uintptr(unsafe.Pointer(utf16p(""))))
+	setFont(hDirEdit, fontBody)
+	setFont(hBack, fontBtn)
+	setFont(hNext, fontBtn)
+	setFont(hCancel, fontBtn)
+	setFont(hBrowse, fontBtn)
+
+	pShowWindow.Call(hwndMain, 5)
 	pUpdateWindow.Call(hwndMain)
+	layoutButtons()
 
-	// Message loop
 	var msg msgStruct
 	for {
 		r, _, _ := user32.NewProc("GetMessageW").Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
@@ -443,5 +926,59 @@ func main() {
 		user32.NewProc("TranslateMessage").Call(uintptr(unsafe.Pointer(&msg)))
 		user32.NewProc("DispatchMessageW").Call(uintptr(unsafe.Pointer(&msg)))
 	}
+}
 
+func curIcon(hInst uintptr) uintptr {
+	r, _, _ := pLoadIcon.Call(hInst, 1)
+	if r == 0 {
+		r, _, _ = pLoadIcon.Call(0, 32512)
+	}
+	return r
+}
+
+func drawBtn(di *drawItemStruct, fill, tc uintptr) {
+	br, _, _ := pCreateSolid.Call(fill)
+	user32.NewProc("FillRect").Call(di.HDC, uintptr(unsafe.Pointer(&di.RcItem)), br)
+	pDeleteObject.Call(br)
+	pSetBkMode.Call(di.HDC, 1)
+	pSetTextColor.Call(di.HDC, tc)
+	tp, _ := windows.UTF16PtrFromString(getBtnText(di.HwndItem))
+	rc := di.RcItem
+	pDrawText.Call(di.HDC, uintptr(unsafe.Pointer(tp)), uintptr(0xFFFFFFFF), uintptr(unsafe.Pointer(&rc)), 0x0025)
+}
+
+func getBtnText(h uintptr) string {
+	buf := make([]uint16, 128)
+	n, _, _ := pSendMessage.Call(h, 0x000D, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
+	return windows.UTF16ToString(buf[:n])
+}
+
+func drawItem(wParam, lParam uintptr) uintptr {
+	di := (*drawItemStruct)(unsafe.Pointer(lParam))
+	id := uintptr(di.CtlID)
+	fill := uintptr(colCard)
+	tc := uintptr(colFg)
+	switch id {
+	case IDNext:
+		if di.ItemState&0x0001 != 0 { // selected
+			fill = colCard2
+		}
+		fill, tc = colAcc, colOnAcc
+		if di.ItemState&0x0001 != 0 {
+			fill = 0xccb81e
+		}
+	case IDBack, IDCancel, IDBrowse:
+		if di.ItemState&0x0001 != 0 {
+			fill = colCard2
+		}
+	}
+	drawBtn(di, fill, tc)
+	if di.ItemState&0x0010 != 0 { // focus underline
+		br, _, _ := pCreateSolid.Call(colAcc)
+		rc := di.RcItem
+		rc.Bottom = rc.Top + 3
+		user32.NewProc("FillRect").Call(di.HDC, uintptr(unsafe.Pointer(&rc)), br)
+		pDeleteObject.Call(br)
+	}
+	return 1
 }
