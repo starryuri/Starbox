@@ -187,6 +187,8 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			}
 			if err := settings.Save(curProfDir, stt); err != nil {
 				SetError("保存设置失败：%v", err)
+			} else {
+				applyTraySettings()
 			}
 			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
@@ -374,6 +376,9 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			pInvalidateRect.Call(hwnd, 0, 1)
 		}
 		return 0
+	case wmTrayIcon:
+		handleTrayMessage(lParam)
+		return 0
 	case wmStatusTick:
 		pInvalidateRect.Call(hwnd, 0, 1)
 		return 0
@@ -434,9 +439,10 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
 		return r
 	case 0x0010: // WM_CLOSE
-		pDestroyWindow.Call(hwnd)
+		closeBehavior() // exit or hide-to-tray per settings
 		return 0
 	case 0x0002: // WM_DESTROY
+		removeTrayIcon()
 		if fontTitle != 0 {
 			pDeleteObject.Call(fontTitle)
 		}

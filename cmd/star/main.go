@@ -432,6 +432,7 @@ func main() {
 	loadThemeChoice()
 	applyTheme()
 	loadDetailLayout()
+	initTray() // registers icon + honors -tray/-silent
 	page = "overview"
 
 
