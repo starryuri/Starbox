@@ -167,6 +167,10 @@ var (
 	pGetClientRect      = user32.NewProc("GetClientRect")
 	pMoveWindow         = user32.NewProc("MoveWindow")
 	pGetWindowRect      = user32.NewProc("GetWindowRectW")
+	pGetDpiForWindow    = user32.NewProc("GetDpiForWindow")
+	pSetThreadDpiAware  = user32.NewProc("SetThreadDpiAwarenessContext")
+	pGetDpiForMonitor   = user32.NewProc("GetDpiForMonitor")
+	pAdjustWindowRectEx = user32.NewProc("AdjustWindowRectEx")
 	pGetDC              = user32.NewProc("GetDC")
 	pReleaseDC          = user32.NewProc("ReleaseDC")
 	pBeginPaint         = user32.NewProc("BeginPaint")
@@ -218,6 +222,7 @@ var (
 	hoverID   string
 	hoverTrk  bool
 	curHand   uintptr
+	dpiScale  int // 100 = 100%
 	curArrow  uintptr
 	wheelAccum int
 	kbCards  []kbCard
@@ -1640,7 +1645,7 @@ func drawScrollIndicator(dc uintptr, contentH, viewH, scroll, x, w int) {
 	fillRectColor(dc, x, y, w, trackH, colAcc)
 }
 
-// hitAt resolves the custom-drawn region under the client point (kb first,
+// then generic lists) — mirrors the click handlers.
 // then generic lists) — mirrors the click handlers.
 func hitAt(x, y int) (string, string) {
 	if kbCardMode() {
@@ -2800,10 +2805,13 @@ func drawItem(diPtr uintptr) uintptr {
 
 func main() {
 	runtime.LockOSThread()
+	user32.NewProc("SetProcessDPIAware").Call()
 	if !acquireSingleInstance() {
 		return // existing window was raised instead
 	}
-	user32.NewProc("SetProcessDPIAware").Call()
+	// per-monitor v2 awareness (-4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+	// older systems ignore it (we keep the legacy SetProcessDPIAware fallback path)
+	user32.NewProc("SetThreadDpiAwarenessContext").Call(^uintptr(3))
 	mod, _, _ := kernel32.NewProc("GetModuleHandleW").Call(0)
 	hInst := mod
 
@@ -2841,6 +2849,9 @@ func main() {
 	enableDarkTitleBar(hwndMain)
 	curHand, _, _ = pLoadCursor.Call(0, 32649)  // IDC_HAND
 	curArrow, _, _ = pLoadCursor.Call(0, 32512) // IDC_ARROW
+	if r, _, _ := pGetDpiForWindow.Call(hwndMain); r != 0 {
+		dpiScale = int(r) * 100 / 96
+	}
 	pSetTimer.Call(hwndMain, 1, 5000, 0) // overview auto-refresh (WM_TIMER id 1)
 
 	fontTitle = createWin32Font(34, true)
