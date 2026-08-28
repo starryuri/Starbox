@@ -1549,15 +1549,20 @@ func bgmCoverAsync(id, title string) {
 		if best.Score > 0 {
 			data["rate"] = best.Score
 		}
-		if rec := recByID(id); rec != nil {
-			for k, v := range rec.Data {
-				if _, ok := data[k]; !ok {
-					data[k] = v
+		// re-read from the store (never touch the shared kbRecs slice off-thread)
+		if all, err := st.List("anime"); err == nil {
+			for _, r := range all {
+				if r.ID == id {
+					for k, v := range r.Data {
+						if _, ok := data[k]; !ok {
+							data[k] = v
+						}
+					}
+					break
 				}
 			}
 		}
 		_, _ = st.Update("anime", id, data)
-		refreshKB()
 		pPostMessage.Call(hwndMain, uintptr(wmAppRefresh), 0, 0)
 	}()
 }
@@ -2114,9 +2119,11 @@ func loadFavWorks() {
 	if fp, ok := rec.Data["image"].(string); ok {
 		favEntImage = fp
 	}
+	typ := favEntType
+	alID := favAlID(rec)
 	go func() {
-		id := favAlID(rec)
-		if favEntType == "cv" || favEntType == "staff" {
+		id := alID
+		if typ == "cv" || typ == "staff" {
 			if w, err := anime.GetStaff(id); err == nil {
 				favEntImage = w.Image
 				favWorks = w.Media
@@ -2605,8 +2612,13 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			pEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		}
 		return 0
-	case wmAppCover, wmAppRefresh:
-		// covers / data changed -> repaint
+	case wmAppCover:
+		// cover bitmap arrived -> repaint
+		pInvalidateRect.Call(hwnd, 0, 1)
+		return 0
+	case wmAppRefresh:
+		// record data changed on a worker thread -> reload slice here (UI thread)
+		refreshKB()
 		pInvalidateRect.Call(hwnd, 0, 1)
 		return 0
 	case wmOverview:
