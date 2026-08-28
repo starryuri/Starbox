@@ -442,7 +442,7 @@ func main() {
 		uintptr(unsafe.Pointer(clsName)),
 		uintptr(unsafe.Pointer(utf16("星匣 STARBOX"))),
 		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 1560, 960,
+		0x80000000, 0x80000000, 1720, 1060,
 		0, 0, hInst, 0)
 	enableDarkTitleBar(hwndMain)
 	curHand, _, _ = pLoadCursor.Call(0, 32649)  // IDC_HAND
@@ -452,11 +452,11 @@ func main() {
 	}
 	pSetTimer.Call(hwndMain, 1, 5000, 0) // overview auto-refresh (WM_TIMER id 1)
 
-	fontTitle = createWin32Font(34, true)
-	fontNav = createWin32Font(22, false)
-	fontCard = createWin32Font(26, false)
-	fontBody = createWin32Font(22, false)
-	fontTiny = createWin32Font(17, false)
+	fontTitle = createWin32Font(38, true)
+	fontNav = createWin32Font(24, false)
+	fontCard = createWin32Font(28, false)
+	fontBody = createWin32Font(23, false)
+	fontTiny = createWin32Font(18, false)
 
 	hBrand = createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 30, 30, 230, 42, fontTitle)
 	hTag = createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 30, 86, 230, 26, fontNav)

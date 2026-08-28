@@ -49,11 +49,11 @@ func ensureFonts() {
 		pDeleteObject.Call(fontBody)
 		pDeleteObject.Call(fontTiny)
 	}
-	fontTitle = createWin32Font(scale(34), true)
-	fontNav = createWin32Font(scale(22), false)
-	fontCard = createWin32Font(scale(26), false)
-	fontBody = createWin32Font(scale(22), false)
-	fontTiny = createWin32Font(scale(17), false)
+	fontTitle = createWin32Font(scale(38), true)
+	fontNav = createWin32Font(scale(24), false)
+	fontCard = createWin32Font(scale(28), false)
+	fontBody = createWin32Font(scale(23), false)
+	fontTiny = createWin32Font(scale(18), false)
 	fontsScaled = dpiScale
 	setFont := func(h, fnt uintptr) {
 		if h != 0 {
@@ -107,9 +107,9 @@ func relayout() {
 	}
 	moveWin(hBrand, 30, 30, sidebarW-50, 52)
 	moveWin(hTag, 30, 94, sidebarW-50, 32)
-	navH := 58
+	navH := 64
 	for i := range pages {
-		moveWin(hNav[i], 26, 132+i*navH, sidebarW-54, navH-6)
+		moveWin(hNav[i], 26, 138+i*navH, sidebarW-54, navH-8)
 	}
 	moveWin(hTitle, contentX, 30, contentW, 54)
 	cardGap := 18
