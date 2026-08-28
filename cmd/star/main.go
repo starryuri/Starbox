@@ -2230,8 +2230,73 @@ func moveWin(h uintptr, x, y, w, hh int) {
 	pMoveWindow.Call(h, uintptr(x), uintptr(y), uintptr(w), uintptr(hh), 1)
 }
 
+// scale adjusts a logical pixel value for the current monitor DPI.
+func scale(n int) int {
+	if dpiScale <= 100 || dpiScale > 500 {
+		return n
+	}
+	return n * dpiScale / 100
+}
+
+var fontsScaled int = 100
+
+// ensureFonts rebuilds all fonts when the DPI scale changed (avoids GDI
+// churn on every resize) and pushes them onto every control.
+func ensureFonts() {
+	if fontsScaled == dpiScale {
+		return
+	}
+	if fontsScaled != 100 {
+		pDeleteObject.Call(fontTitle)
+		pDeleteObject.Call(fontNav)
+		pDeleteObject.Call(fontCard)
+		pDeleteObject.Call(fontBody)
+		pDeleteObject.Call(fontTiny)
+	}
+	fontTitle = createWin32Font(scale(34), true)
+	fontNav = createWin32Font(scale(22), false)
+	fontCard = createWin32Font(scale(26), false)
+	fontBody = createWin32Font(scale(22), false)
+	fontTiny = createWin32Font(scale(17), false)
+	fontsScaled = dpiScale
+	setFont := func(h, fnt uintptr) {
+		if h != 0 {
+			pSendMessage.Call(h, 0x0030, fnt, 1)
+		}
+	}
+	setFont(hBrand, fontTitle)
+	setFont(hTag, fontNav)
+	for i := range hNav {
+		setFont(hNav[i], fontNav)
+	}
+	setFont(hTitle, fontTitle)
+	for i := range hCards {
+		setFont(hCards[i], fontCard)
+	}
+	setFont(hBody, fontBody)
+	for i := range hPlat {
+		setFont(hPlat[i], fontNav)
+	}
+	setFont(hAcc, fontBody)
+	setFont(hPass, fontBody)
+	setFont(hSave, fontNav)
+	setFont(hReff, fontNav)
+	setFont(hReffMine, fontNav)
+	setFont(hHint, fontNav)
+	setFont(hInfo, fontBody)
+	setFont(hAuto, fontNav)
+	setFont(hAutoSave, fontNav)
+	for i := range hKbTab {
+		setFont(hKbTab[i], fontNav)
+	}
+	setFont(hKbToA, fontBody)
+	setFont(hKbAddBtn, fontNav)
+	setFont(hKbSearchBtn, fontNav)
+}
+
 // relayout positions all controls based on the current client size.
 func relayout() {
+	ensureFonts()
 	var rc rect
 	pGetClientRect.Call(hwndMain, uintptr(unsafe.Pointer(&rc)))
 	w, h := int(rc.Right), int(rc.Bottom)
