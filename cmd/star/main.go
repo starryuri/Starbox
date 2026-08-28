@@ -166,6 +166,7 @@ var (
 	pGetDlgCtrlID       = user32.NewProc("GetDlgCtrlID")
 	pGetClientRect      = user32.NewProc("GetClientRect")
 	pMoveWindow         = user32.NewProc("MoveWindow")
+	pGetWindowRect      = user32.NewProc("GetWindowRectW")
 	pGetDC              = user32.NewProc("GetDC")
 	pReleaseDC          = user32.NewProc("ReleaseDC")
 	pBeginPaint         = user32.NewProc("BeginPaint")
@@ -2231,9 +2232,13 @@ func relayout() {
 	for i := 0; i < 4; i++ {
 		moveWin(hPlat[i], contentX+i*(platW+platGap), 106, platW, 52)
 	}
-	moveWin(hAcc, contentX, 182, 460, 42)
-	moveWin(hPass, contentX+480, 182, 460, 42)
-	moveWin(hSave, contentX+960, 180, 140, 46)
+	accW := (contentW - 260) / 2
+	if accW < 200 {
+		accW = 200
+	}
+	moveWin(hAcc, contentX, 182, accW, 42)
+	moveWin(hPass, contentX+accW+10, 182, accW, 42)
+	moveWin(hSave, contentX+2*accW+20, 180, contentW-2*accW-20, 46)
 	moveWin(hReff, contentX, 246, 140, 44)
 	moveWin(hReffMine, contentX+150, 246, 140, 44)
 	moveWin(hHint, contentX+150, 248, contentW-150, 36)
@@ -2248,9 +2253,13 @@ func relayout() {
 	for i := range kbCols {
 		moveWin(hKbTab[i], contentX+i*(kbw+kbgap), 106, kbw, 52)
 	}
-	moveWin(hKbToA, contentX, 182, 560, 44)
-	moveWin(hKbAddBtn, contentX+570, 178, 150, 48)
-	moveWin(hKbSearchBtn, contentX+730, 178, 180, 48)
+	inputW := contentW - 340
+	if inputW < 220 {
+		inputW = 220
+	}
+	moveWin(hKbToA, contentX, 182, inputW, 44)
+	moveWin(hKbAddBtn, contentX+inputW+10, 178, 150, 48)
+	moveWin(hKbSearchBtn, contentX+inputW+170, 178, 160, 48)
 	kbScroll = 0
 	if kbCardMode() {
 		refreshKB()
@@ -2648,6 +2657,24 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			return brushBg
 		}
 	case 0x0005: // WM_SIZE
+		// enforce a sane minimum so fixed-width controls never clip
+		minW, minH := 1180, 700
+		wCur := int(int16(uint16(lParam & 0xFFFF)))
+		hCur := int(int16(uint16((lParam >> 16) & 0xFFFF)))
+		if wParam == 0 && (wCur < minW || hCur < minH) { // SIZE_RESTORED
+			rc := rect{}
+			pGetWindowRect.Call(hwndMain, uintptr(unsafe.Pointer(&rc)))
+			nx, ny := int(rc.Left), int(rc.Top)
+			nw, nh := wCur, hCur
+			if nw < minW {
+				nw = minW
+			}
+			if nh < minH {
+				nh = minH
+			}
+			pMoveWindow.Call(hwndMain, uintptr(nx), uintptr(ny), uintptr(nw), uintptr(nh), 1)
+			return 0
+		}
 		relayout()
 		r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
 		return r
@@ -2669,6 +2696,13 @@ func drawBtn(di *drawItemStruct, fill, tc uintptr) {
 	br, _, _ := pCreateSolidBrush.Call(fill)
 	pFillRect.Call(di.HDC, uintptr(unsafe.Pointer(&di.RcItem)), br)
 	pDeleteObject.Call(br)
+	if di.ItemState&0x0010 != 0 { // ODS_FOCUS — visible keyboard focus
+		br, _, _ = pCreateSolidBrush.Call(colAcc)
+		rc := di.RcItem
+		rc.Bottom = rc.Top + 3
+		pFillRect.Call(di.HDC, uintptr(unsafe.Pointer(&rc)), br)
+		pDeleteObject.Call(br)
+	}
 	pSetBkMode.Call(di.HDC, 1)
 	pSetTextColor.Call(di.HDC, tc)
 	tp, _ := windows.UTF16PtrFromString(getText(di.HwndItem))
@@ -2806,8 +2840,8 @@ func main() {
 		hKbTab[i] = createChild("BUTTON", kbColLabels[kbCols[i]], bsOwnerDraw, KBTab+i, 310+i*120, 96, 116, 40, fontNav)
 	}
 	hKbToA = createChild("EDIT", "", esAutoHScroll|wsTabStop, KBToA, 310, 160, 460, 36, fontBody)
-	hKbAddBtn = createChild("BUTTON", "＋ 添加", bsOwnerDraw, KBAdd, 780, 158, 110, 40, fontNav)
-	hKbSearchBtn = createChild("BUTTON", "搜索并添加", bsOwnerDraw, KBSearch, 900, 158, 150, 40, fontNav)
+	hKbAddBtn = createChild("BUTTON", "＋ 添加", bsOwnerDraw|wsTabStop, KBAdd, 780, 158, 110, 40, fontNav)
+	hKbSearchBtn = createChild("BUTTON", "搜索并添加", bsOwnerDraw|wsTabStop, KBSearch, 900, 158, 150, 40, fontNav)
 	// dark-theme the edit boxes (disable visual styles so WM_CTLCOLOREDIT applies)
 	empty := utf16("")
 	pSetWindowTheme.Call(hKbToA, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
@@ -2829,6 +2863,15 @@ func main() {
 		r, _, _ := user32.NewProc("GetMessageW").Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
 		if int32(r) <= 0 {
 			break
+		}
+		// wheel from a focused EDIT goes to the main window so lists keep scrolling
+		if msg.message == 0x020A && msg.hwnd != hwndMain {
+			msg.hwnd = hwndMain
+		}
+		// dialog manager handles Tab navigation + keyboard mnemonics
+		isDlg, _, _ := user32.NewProc("IsDialogMessageW").Call(hwndMain, uintptr(unsafe.Pointer(&msg)))
+		if isDlg != 0 {
+			continue
 		}
 		user32.NewProc("TranslateMessage").Call(uintptr(unsafe.Pointer(&msg)))
 		user32.NewProc("DispatchMessageW").Call(uintptr(unsafe.Pointer(&msg)))
