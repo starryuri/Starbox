@@ -204,6 +204,11 @@ func loadOverview() {
 }
 
 func loadInsight() {
+	if insCacheText != "" && time.Since(insCacheAt) < 10*time.Minute {
+		insText = insCacheText
+		pPostMessage.Call(hwndMain, uintptr(wmInsight), 0, 0)
+		return
+	}
 	if insBusy {
 		return
 	}
@@ -211,6 +216,8 @@ func loadInsight() {
 	setText(hInfo, "（正在获取 GitHub 热门…）")
 	go func() {
 		insText = insightInfo()
+		insCacheText = insText
+		insCacheAt = time.Now()
 		insBusy = false
 		pPostMessage.Call(hwndMain, uintptr(wmInsight), 0, 0)
 	}()
@@ -222,6 +229,7 @@ func refreshInsight() {
 	if insBusy {
 		return
 	}
+	insCacheText = "" // explicit refresh: bypass cache
 	insBusy = true
 	setText(hInfo, "（正在刷新…）")
 	go func() {
@@ -231,14 +239,33 @@ func refreshInsight() {
 	}()
 }
 
+// trending cache: GitHub API is rate-limited; cache for 10 minutes.
+var (
+	insCacheText string
+	insCacheAt   time.Time
+)
+
+// disk scan results are expensive (full C:\ walk); cache for 10 minutes.
+var (
+	dskCacheBody  string
+	dskCacheAt    time.Time
+)
+
 func loadDisk() {
 	if dskBusy {
+		return
+	}
+	if dskCacheBody != "" && time.Since(dskCacheAt) < 10*time.Minute {
+		dskBody = dskCacheBody
+		pPostMessage.Call(hwndMain, uintptr(wmDisk), 0, 0)
 		return
 	}
 	dskBusy = true
 	setText(hBody, "（正在扫描磁盘，可能需要几秒…）")
 	go func() {
 		dskBody = dirText()
+		dskCacheBody = dskBody
+		dskCacheAt = time.Now()
 		dskBusy = false
 		pPostMessage.Call(hwndMain, uintptr(wmDisk), 0, 0)
 	}()
