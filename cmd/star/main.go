@@ -20,7 +20,6 @@ import (
 	"butler/internal/anime"
 	"butler/internal/config"
 	"butler/internal/kb"
-	"butler/internal/monitor"
 
 )
 
@@ -194,7 +193,6 @@ var (
 	hKbToA, hKbAddBtn   uintptr
 	hKbSearchBtn        uintptr
 	page                string
-	mgr                 *monitor.State
 	dataDir             string
 	wndProc             = syscall.NewCallback(wndProcMain)
 )
@@ -409,7 +407,6 @@ func main() {
 	coverDir = filepath.Join(dataDir, "covers")
 	_ = os.MkdirAll(coverDir, 0o755)
 	cfg, _ = config.Load(filepath.Join(filepath.Dir(exe), "config.json"))
-	mgr = monitor.New()
 	st = kb.New(dataDir)
 	page = "overview"
 

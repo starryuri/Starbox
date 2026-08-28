@@ -34,6 +34,11 @@ func loadBind() {
 	}
 	acc, _ := m[bindKeys[curPlat]].(string)
 	pass, _ := m[bindKeys[curPlat]+"_pass"].(string)
+	// stored values are DPAPI-encrypted ("dpapi:<b64>"); plain values are
+	// legacy from before encryption and are shown as-is
+	if dec := settings.DPAPIUnprotect(pass); dec != "" {
+		pass = dec
+	}
 	setText(hAcc, acc)
 	setText(hPass, pass)
 	setText(hHint, "凭据仅存本机")
@@ -108,7 +113,8 @@ func saveBind() {
 		m = recs[0].Data
 	}
 	m[bindKeys[curPlat]] = getText(hAcc)
-	m[bindKeys[curPlat]+"_pass"] = getText(hPass)
+	// passwords/tokens at rest are DPAPI-encrypted (user scope)
+	m[bindKeys[curPlat]+"_pass"] = settings.DPAPIProtect(getText(hPass))
 	var err error
 	if len(recs) > 0 {
 		_, err = st.Update("connect", recs[0].ID, m)

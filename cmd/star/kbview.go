@@ -320,7 +320,8 @@ func paintKBCards(dc uintptr) {
 			drawTextRect(dc, c.x, c.y+coverH/2-30, c.w, 60, firstRune(c.title), fontTiny, colDim, dtCenter|dtVCenter)
 		}
 		ty := c.y + coverH
-		drawTextRect(dc, c.x+6, ty+2, c.w-12, 40, c.title, fontCard, colFg, dtSingle)
+		// DT_END_ELLIPSIS (0x00008000): "长标题…" instead of mid-glyph cut
+		drawTextRect(dc, c.x+6, ty+2, c.w-12, 40, c.title, fontCard, colFg, dtSingle|0x00008000)
 		sc := statusColor(c.status)
 		fillRectColor(dc, c.x+6, ty+44, c.w-12, 26, sc)
 		drawTextRect(dc, c.x+6, ty+44, c.w-12, 26, c.status, fontTiny, colOnAcc, dtSingle|dtVCenter)

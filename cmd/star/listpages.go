@@ -162,7 +162,7 @@ func paintListPage(dc uintptr) {
 		if rightPad < 20 {
 			rightPad = 20
 		}
-		drawTextRect(dc, tx, y+8, rightPad, 30, row.title, fontCard, colFg, dtSingle)
+		drawTextRect(dc, tx, y+8, rightPad, 30, row.title, fontCard, colFg, dtSingle|0x00008000)
 		drawTextRect(dc, tx, y+40, rightPad, 24, row.sub, fontBody, colDim, dtSingle)
 		listHits = append(listHits, detHit{cx + 12, y, cw - 24, rh, "row", row.id})
 	}
