@@ -105,16 +105,18 @@ var pageLabels = map[string]string{
 }
 
 // colors (COLORREF 0x00BBGGRR)
-const (
-	colBg    = 0x20100c // #0c1020
-	colSide  = 0x2b1610 // #10162b
-	colAcc   = 0xeed322 // #22d3ee
-	colFg    = 0xf7ece7 // #e7ecf7
-	colOnAcc = 0x170e0b
-	colCard  = 0x4a3c20 // #203c4a
-	colCard2 = 0x60502e // #2e5060 (cover placeholder)
-	colDim   = 0x8f8271 // #71828f
-	colRed   = 0x2e201a // #1a202e dark red (delete)
+// color vars — driven by the active theme (theme.go); mutable so theme
+// switching can repaint live without restarting.
+var (
+	colBg    uintptr
+	colSide  uintptr
+	colAcc   uintptr
+	colFg    uintptr
+	colOnAcc uintptr
+	colCard  uintptr
+	colCard2 uintptr
+	colDim   uintptr
+	colRed   uintptr
 )
 
 var (
@@ -408,10 +410,10 @@ func main() {
 	_ = os.MkdirAll(coverDir, 0o755)
 	cfg, _ = config.Load(filepath.Join(filepath.Dir(exe), "config.json"))
 	st = kb.New(dataDir)
+	loadThemeChoice()
+	applyTheme()
 	page = "overview"
 
-	brushBg, _, _ = pCreateSolidBrush.Call(uintptr(colBg))
-	brushCard, _, _ = pCreateSolidBrush.Call(uintptr(colCard))
 
 	clsName := utf16("STARBOXMainWnd")
 	wc := wndClassEx{
