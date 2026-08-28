@@ -35,7 +35,10 @@ func findRec(coll, id string) *kb.Record {
 }
 
 func refreshList() {
-	recs, _ := st.List(listColl())
+	recs, err := st.List(listColl())
+	if err != nil {
+		SetError("读取 %s 集合失败：%v", listColl(), err)
+	}
 	listRows = listRows[:0]
 	listHits = listHits[:0]
 	listAct = false

@@ -124,6 +124,7 @@ func ensureCover(id, url string) {
 		resp, err := client.Get(url)
 		if err != nil {
 			covers.Store(id, &covInfo{path: path})
+			SetStatus("封面下载失败")
 			return
 		}
 		defer resp.Body.Close()
@@ -212,7 +213,12 @@ func kbGeom() (cx, cw, top, bottom int) {
 }
 
 func refreshKB() {
-	recs, _ := st.List(kbCol)
+	recs, err := st.List(kbCol)
+	if err != nil {
+		SetError("读取 %s 集合失败：%v", kbCol, err)
+	} else if statusVisible() && statusIsErr {
+		statusText = "" // recovered
+	}
 	kbRecs = recs
 	for _, r := range recs {
 		if c, _ := r.Data["cover"].(string); c != "" {

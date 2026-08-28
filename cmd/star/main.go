@@ -84,6 +84,7 @@ const (
 	wmSearchDone = 0x8007
 	wmRss        = 0x8008
 	wmDetail     = 0x800A
+	wmStatusTick = 0x800C
 	wmBindDone      = 0x800B
 )
 

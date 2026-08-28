@@ -126,7 +126,11 @@ func addAnimeFromSearch(idx int) {
 	if r.Episodes != nil {
 		data["total"] = *r.Episodes
 	}
-	rec, _ := st.Add("anime", data)
+	rec, err := st.Add("anime", data)
+	if err != nil {
+		SetError("添加失败：%v", err)
+		return
+	}
 	if rec.ID != "" && r.Cover != "" {
 		ensureCover(rec.ID, r.Cover)
 	}

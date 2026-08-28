@@ -50,6 +50,9 @@ func hitTestKB(x, y int) string {
 }
 
 func paintFragment(dc uintptr) {
+	// status strip under the page title (errors / notices)
+	cx, cw, top, _ := kbGeom()
+	paintStatusStrip(dc, cx, top-52, cw)
 	if kbCardMode() {
 		if detailID != "" {
 			paintKBDetail(dc)
@@ -108,8 +111,16 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			stt := settings.Load(dataDir)
 			stt.AutoStart = on == 1
 			exe, _ := os.Executable()
-			_ = settings.SetAutoStart(stt.AutoStart, exe)
-			_ = settings.Save(dataDir, stt)
+			if err := settings.SetAutoStart(stt.AutoStart, exe); err != nil {
+				SetError("自启动设置失败：%v", err)
+			} else if stt.AutoStart {
+				SetStatus("已开启开机自启动")
+			} else {
+				SetStatus("已关闭开机自启动")
+			}
+			if err := settings.Save(dataDir, stt); err != nil {
+				SetError("保存设置失败：%v", err)
+			}
 			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
 		}
@@ -295,6 +306,9 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		if kbCardMode() && detailID != "" {
 			pInvalidateRect.Call(hwnd, 0, 1)
 		}
+		return 0
+	case wmStatusTick:
+		pInvalidateRect.Call(hwnd, 0, 1)
 		return 0
 	case wmSearchDone:
 		if kbCardMode() {

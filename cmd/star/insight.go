@@ -109,12 +109,18 @@ func saveBind() {
 	}
 	m[bindKeys[curPlat]] = getText(hAcc)
 	m[bindKeys[curPlat]+"_pass"] = getText(hPass)
+	var err error
 	if len(recs) > 0 {
-		_, _ = st.Update("connect", recs[0].ID, m)
+		_, err = st.Update("connect", recs[0].ID, m)
 	} else {
-		_, _ = st.Add("connect", m)
+		_, err = st.Add("connect", m)
 	}
-	setText(hHint, "已保存到本机")
+	if err != nil {
+		SetError("保存绑定失败：%v", err)
+	} else {
+		setText(hHint, "已保存到本机")
+		SetStatus("凭据已保存")
+	}
 }
 
 func insightInfo() string {
