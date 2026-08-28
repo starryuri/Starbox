@@ -177,6 +177,9 @@ var (
 	pStretchBlt         = gdi32.NewProc("StretchBlt")
 	pSetStretchBltMode  = gdi32.NewProc("SetStretchBltMode")
 	pBitBlt             = gdi32.NewProc("BitBlt")
+	pTrackMouseEvent    = user32.NewProc("TrackMouseEvent")
+	pSetCursor          = user32.NewProc("SetCursor")
+	pLoadCursor         = user32.NewProc("LoadCursorW")
 	pSetWindowTheme    = uxtheme.NewProc("SetWindowTheme")
 )
 
@@ -210,6 +213,11 @@ var (
 // --- KB anime card / detail state ---
 var (
 	kbRecs   []kb.Record
+	hoverAct  string
+	hoverID   string
+	hoverTrk  bool
+	curHand   uintptr
+	curArrow  uintptr
 	wheelAccum int
 	kbCards  []kbCard
 	kbScroll int
@@ -1199,7 +1207,12 @@ func paintKBCards(dc uintptr) {
 		if c.y < top-160 || c.y > bottom {
 			continue // offscreen
 		}
-		fillRectColor(dc, c.x, c.y, c.w, c.h, colCard)
+		fill := uintptr(colCard)
+		if hoverAct == "card" && hoverID == c.id {
+			fill = colCard2
+			fillRectColor(dc, c.x-2, c.y-2, c.w+4, c.h+4, colAcc) // accent rim
+		}
+		fillRectColor(dc, c.x, c.y, c.w, c.h, fill)
 		coverH := c.w * 14 / 10
 		ci := getCover(c.id)
 		if ci != nil && ci.loaded {
@@ -1380,17 +1393,31 @@ func paintKBDetail(dc uintptr) {
 	bw := 140
 	bh := 48
 	// back
-	fillRectColor(dc, cx+pad, by, bw, bh, colCard2)
+	backFill := uintptr(colCard2)
+	if hoverAct == "back" {
+		backFill = colAcc
+	}
+	fillRectColor(dc, cx+pad, by, bw, bh, backFill)
 	drawTextRect(dc, cx+pad, by, bw, bh, "← 返回", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
 	detHits = append(detHits, detHit{cx + pad, by, bw, bh, "back", ""})
 	// watch +1
 	wx := cx + pad + bw + 12
-	fillRectColor(dc, wx, by, bw, bh, colAcc)
-	drawTextRect(dc, wx, by, bw, bh, "▶ 看一集 +1", fontNav, colOnAcc, dtSingle|dtVCenter|dtCenter)
+	watchFill := uintptr(colAcc)
+	watchTx := uintptr(colOnAcc)
+	if hoverAct == "watch" {
+		watchFill = colFg
+		watchTx = colBg
+	}
+	fillRectColor(dc, wx, by, bw, bh, watchFill)
+	drawTextRect(dc, wx, by, bw, bh, "▶ 看一集 +1", fontNav, watchTx, dtSingle|dtVCenter|dtCenter)
 	detHits = append(detHits, detHit{wx, by, bw, bh, "watch", r.ID})
 	// delete
 	dx := cx + cw - pad - bw
-	fillRectColor(dc, dx, by, bw, bh, colRed)
+	delFill := uintptr(colRed)
+	if hoverAct == "delete" {
+		delFill = 0x0000D0 // brighten on hover
+	}
+	fillRectColor(dc, dx, by, bw, bh, delFill)
 	drawTextRect(dc, dx, by, bw, bh, "删除", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
 	detHits = append(detHits, detHit{dx, by, bw, bh, "delete", r.ID})
 	if link, _ := data["link"].(string); link != "" {
@@ -1580,8 +1607,62 @@ func favToggle(name, typ string, alID int) {
 	})
 }
 
+// hitAt resolves the custom-drawn region under the client point (kb first,
+// then generic lists) — mirrors the click handlers.
+func hitAt(x, y int) (string, string) {
+	if kbCardMode() {
+		if h := hitTestKB(x, y); h != "" {
+			p := strings.SplitN(h, "|", 2)
+			if len(p) == 2 {
+				return p[0], p[1]
+			}
+			return p[0], ""
+		}
+		return "", ""
+	}
+	if listMode() {
+		if h := hitTestList(x, y); h != "" {
+			p := strings.SplitN(h, "|", 2)
+			if len(p) == 2 {
+				return p[0], p[1]
+			}
+			return p[0], ""
+		}
+	}
+	return "", ""
+}
+
+// trackHover asks for WM_MOUSELEAVE so the hover state can be cleared.
+func trackHover(hwnd uintptr) {
+	if hoverTrk {
+		return
+	}
+	type tme struct {
+		cbSize  uint32
+		dwFlags uint32
+		hwnd    uintptr
+	}
+	ev := tme{cbSize: 24, dwFlags: 0x00000002, hwnd: hwnd} // TME_LEAVE
+	pTrackMouseEvent.Call(uintptr(unsafe.Pointer(&ev)))
+	hoverTrk = true
+}
+
+// updateHover refreshes hover state + hand cursor; true when repaint needed.
+func updateHover(x, y int) bool {
+	action, id := hitAt(x, y)
+	if action != "" && curHand != 0 {
+		pSetCursor.Call(curHand)
+	}
+	changed := action != hoverAct || id != hoverID
+	hoverAct, hoverID = action, id
+	return changed
+}
+
+// ---------- hover + cursor management (custom-drawn buttons) ----------
+
 func onKBHit(action, id string) {
-	switch action {	case "card":
+	switch action {
+	case "card":
 		detailID = id
 		detailInfo = nil
 		pInvalidateRect.Call(hwndMain, 0, 1)
@@ -2339,6 +2420,20 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 				return 0
 			}
 		}
+	case 0x0200: // WM_MOUSEMOVE
+		x, y := mouseXY(lParam)
+		trackHover(hwnd)
+		if updateHover(x, y) {
+			pInvalidateRect.Call(hwnd, 0, 1)
+		}
+		return 0
+	case 0x02A2: // WM_MOUSELEAVE
+		hoverTrk = false
+		if hoverAct != "" {
+			hoverAct, hoverID = "", ""
+			pInvalidateRect.Call(hwnd, 0, 1)
+		}
+		return 0
 	case 0x020A: // WM_MOUSEWHEEL
 		if kbCardMode() && detailID == "" && !searchMode {
 			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
@@ -2606,6 +2701,8 @@ func main() {
 		0x80000000, 0x80000000, 1560, 960,
 		0, 0, hInst, 0)
 	enableDarkTitleBar(hwndMain)
+	curHand, _, _ = pLoadCursor.Call(0, 32649)  // IDC_HAND
+	curArrow, _, _ = pLoadCursor.Call(0, 32512) // IDC_ARROW
 	pSetTimer.Call(hwndMain, 1, 5000, 0) // overview auto-refresh (WM_TIMER id 1)
 
 	fontTitle = createWin32Font(34, true)
