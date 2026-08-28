@@ -1203,6 +1203,12 @@ func paintKBCards(dc uintptr) {
 		return
 	}
 	kbCards = kbs2cards()
+	defer func() {
+		if last := kbCards; len(last) > 0 {
+			lastBottom := last[len(last)-1].y + last[len(last)-1].h
+			drawScrollIndicator(dc, lastBottom-top, bottom-top, kbScroll, cx+cw-6, 4)
+		}
+	}()
 	for _, c := range kbCards {
 		if c.y < top-160 || c.y > bottom {
 			continue // offscreen
@@ -1607,6 +1613,26 @@ func favToggle(name, typ string, alID int) {
 	})
 }
 
+// drawScrollIndicator renders a slim scrollbar hint for scrollable content.
+func drawScrollIndicator(dc uintptr, contentH, viewH, scroll, x, w int) {
+	if contentH <= viewH || viewH <= 0 || w <= 0 {
+		return
+	}
+	trackH := viewH * viewH / contentH
+	if trackH < 24 {
+		trackH = 24
+	}
+	maxScroll := contentH - viewH
+	if maxScroll <= 0 {
+		return
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	y := scroll * (viewH - trackH) / maxScroll
+	fillRectColor(dc, x, y, w, trackH, colAcc)
+}
+
 // hitAt resolves the custom-drawn region under the client point (kb first,
 // then generic lists) — mirrors the click handlers.
 func hitAt(x, y int) (string, string) {
@@ -1924,12 +1950,29 @@ func paintListPage(dc uintptr) {
 			continue
 		}
 		bg := uintptr(colCard)
+		rowHover := hoverAct == "row" && hoverID == row.id
 		if row.accent {
+			bg = colCard2
+		}
+		if rowHover {
 			bg = colCard2
 		}
 		fillRectColor(dc, cx+12, y, cw-24, rh, bg)
 		if row.accent {
 			fillRectColor(dc, cx+12, y, 4, rh, colAcc)
+		}
+		// delete button (books/study/games/notes/favs rows), right side
+		if listPage != "notify" {
+			dbw, dbh := 64, 34
+			dbx := cx + cw - 12 - dbw - 10
+			dby := y + (rh-dbh)/2
+			delFill := uintptr(colRed)
+			if hoverAct == "rowdel" && hoverID == row.id {
+				delFill = 0x0000D0
+			}
+			fillRectColor(dc, dbx, dby, dbw, dbh, delFill)
+			drawTextRect(dc, dbx, dby, dbw, dbh, "删除", fontBody, colFg, dtSingle|dtVCenter|dtCenter)
+			listHits = append(listHits, detHit{dbx, dby, dbw, dbh, "rowdel", row.id})
 		}
 		tx := cx + 24
 		if row.tag != "" {
@@ -1987,6 +2030,24 @@ func onListHit(action, id string) {
 			loadFavWorks()
 			pInvalidateRect.Call(hwndMain, 0, 1)
 		}
+	case "rowdel":
+		coll := listColl()
+		name := ""
+		if rec := findRec(coll, id); rec != nil {
+			name, _ = rec.Data["title"].(string)
+			if name == "" {
+				name, _ = rec.Data["name"].(string)
+			}
+		}
+		if confirmBox("确定删除「"+name+"」？删除后无法恢复。", "删除确认") {
+			_ = st.Delete(coll, id)
+			if listPage == "favs" && favDetailID == id {
+				favDetailID = ""
+			}
+			refreshList()
+			pInvalidateRect.Call(hwndMain, 0, 1)
+		}
+		return
 	case "favback":
 		favDetailID = ""
 		pInvalidateRect.Call(hwndMain, 0, 1)
