@@ -234,6 +234,7 @@ var (
 	searchBusy    bool
 	searchQuery   string
 	searchResults []anime.Result
+	bgmFallback   bool // set when Bangumi relay fails/empty this session
 )
 
 // --- generic themed list state (favs / notify / rules) ---
@@ -1724,6 +1725,7 @@ func onKBHit(action, id string) {
 
 // --- anime search-and-pick ---
 
+// runAnimeSearch queries Bangumi (Chinese-first) and falls back to AniList.
 func runAnimeSearch() {
 	q := strings.TrimSpace(getText(hKbToA))
 	if q == "" || searchBusy {
@@ -1735,6 +1737,31 @@ func runAnimeSearch() {
 	searchResults = nil
 	pInvalidateRect.Call(hwndMain, 0, 1)
 	go func() {
+		if !bgmFallback {
+			// primary path: Bangumi relay — Chinese titles/covers/scores
+			if res, err := anime.BangumiSearch(q); err == nil && len(res) > 0 {
+				for _, b := range res {
+					searchResults = append(searchResults, anime.Result{
+						ID:       b.ID,
+						Title:    b.Title,
+						Episodes: b.Eps,
+						Score:    b.Score,
+						Cover:    b.Cover,
+						Year:     b.Year,
+						URL:      b.URL,
+					})
+					if b.Cover != "" {
+						ensureCover("sfv"+strconv.Itoa(b.ID), b.Cover)
+					}
+				}
+				searchBusy = false
+				pPostMessage.Call(hwndMain, uintptr(wmSearchDone), 0, 0)
+				return
+			}
+			// Bangumi empty/unreachable -> AniList fallback for this session
+			bgmFallback = true
+		}
+		// fallback: AniList (English metadata)
 		res, err := anime.Search(q)
 		if err == nil {
 			searchResults = res
@@ -1799,7 +1826,11 @@ func paintSearchResults(dc uintptr) {
 		return
 	}
 	if len(searchResults) == 0 {
-		drawTextRect(dc, cx+16, gy, cw-32, 40, "（未找到结果，试试英文名）", fontBody, colDim, dtLeft)
+		if !bgmFallback {
+		drawTextRect(dc, cx+16, gy, cw-32, 40, "（Bangumi 无结果）", fontBody, colDim, dtLeft)
+	} else {
+		drawTextRect(dc, cx+16, gy, cw-32, 40, "（未找到结果）", fontBody, colDim, dtLeft)
+	}
 		return
 	}
 	const gap = 16
