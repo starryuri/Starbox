@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/draw"
@@ -157,6 +158,83 @@ func getCover(id string) *covInfo {
 		return v.(*covInfo)
 	}
 	return nil
+}
+
+// ---------- detail page section ordering (task: 自由排列) ----------
+
+var detailSections = []string{"meta", "studios", "cast", "staff"} // default order
+
+func detailLayoutPath() string { return filepath.Join(dataDir, "detail_layout.json") }
+
+func loadDetailLayout() {
+	b, err := os.ReadFile(detailLayoutPath())
+	if err != nil {
+		return
+	}
+	var v struct {
+		Order []string `json:"order"`
+	}
+	if json.Unmarshal(b, &v) != nil {
+		return
+	}
+	// validate: same set of sections
+	if len(v.Order) != len(detailSections) {
+		return
+	}
+	seen := map[string]bool{}
+	for _, s := range v.Order {
+		if !sectionValid(s) || seen[s] {
+			return
+		}
+		seen[s] = true
+	}
+	detailSections = v.Order
+}
+
+func saveDetailLayout() {
+	b, _ := json.MarshalIndent(struct {
+		Order []string `json:"order"`
+	}{detailSections}, "", "  ")
+	_ = os.MkdirAll(dataDir, 0o755)
+	_ = os.WriteFile(detailLayoutPath(), b, 0o644)
+}
+
+func sectionValid(s string) bool {
+	for _, v := range []string{"meta", "studios", "cast", "staff"} {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func moveSection(id string, delta int) {
+	idx := -1
+	for i, s := range detailSections {
+		if s == id {
+			idx = i
+			break
+		}
+	}
+	n := idx + delta
+	if idx < 0 || n < 0 || n >= len(detailSections) {
+		return
+	}
+	detailSections[idx], detailSections[n] = detailSections[n], detailSections[idx]
+	saveDetailLayout()
+	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
+// drawSectionHeader renders a section title with ↑/↓ reorder buttons.
+func drawSectionHeader(dc uintptr, x, y, w int, title, sec string, hits *[]detHit) {
+	drawTextRect(dc, x, y, 220, 30, title, fontNav, colAcc, dtSingle|dtVCenter)
+	bx := x + w - 96
+	fillRectColor(dc, bx, y, 44, 28, colCard)
+	drawTextRect(dc, bx, y, 44, 28, "↑", fontTiny, colFg, dtCenter|dtVCenter)
+	*hits = append(*hits, detHit{bx, y, 44, 28, "secup", sec})
+	fillRectColor(dc, bx+50, y, 44, 28, colCard)
+	drawTextRect(dc, bx+50, y, 44, 28, "↓", fontTiny, colFg, dtCenter|dtVCenter)
+	*hits = append(*hits, detHit{bx + 50, y, 44, 28, "secdown", sec})
 }
 
 // drawStretch draws the cover fitted (letterboxed) inside the target rect
@@ -429,30 +507,41 @@ func paintKBDetail(dc uintptr) {
 		sx += w + 10
 	}
 	my := sty + 56
-	meta := "评分 " + fmt.Sprintf("%.1f", rate)
-	if total != "" {
-		meta += "    集数 " + total
-	}
-	if watched != "" {
-		meta += "    已看 " + watched
-	}
-	drawTextRect(dc, ix, my, iw, 38, meta, fontNav, colDim, dtSingle|dtVCenter)
-	ny := my + 52
-	nh := bottom - ny - 116 // leave room for the link bar above the buttons
-	if nh < 50 {
-		nh = 50
-	}
+	// 简介 note (always right under the status chips)
 	if note != "" {
-		drawTextRect(dc, ix, ny, iw, nh, note, fontBody, colFg, dtWordBreak)
+		drawTextRect(dc, ix, my, iw, 96, note, fontBody, colFg, dtWordBreak)
 	}
-	// studios + main cast, each with a clickable favorite dot
-	if detailInfo != nil && detailLoading != r.ID {
-		if len(detailInfo.Studios) > 0 {
-			sy := sty + 56
-			drawTextRect(dc, ix, sy, 70, 30, "制作", fontNav, colDim, dtSingle|dtVCenter)
-			sxx := ix + 78
+	// sections render in user-configured order (↑/↓ arrows on each header)
+	curY := my + 110
+	drawn := map[string]bool{}
+	for _, sec := range detailSections {
+		if drawn[sec] {
+			continue
+		}
+		drawn[sec] = true
+		switch sec {
+		case "meta":
+			meta := "评分 " + fmt.Sprintf("%.1f", rate)
+			if total != "" {
+				meta += "    集数 " + total
+			}
+			if watched != "" {
+				meta += "    已看 " + watched
+			}
+			if air, _ := data["air_start"].(string); air != "" {
+				meta += "    播出 " + air
+			}
+			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "信息", sec, &detHits)
+			drawTextRect(dc, ix, curY+40, cw-(ix-cx)-20, 30, meta, fontBody, colDim, dtSingle|dtVCenter)
+			curY += 84
+		case "studios":
+			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Studios) == 0 {
+				continue
+			}
+			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "制作公司", sec, &detHits)
+			sx2 := ix + 12
 			for _, s := range detailInfo.Studios {
-				if sxx > cx+cw-120 {
+				if sx2 > cx+cw-120 {
 					break
 				}
 				faved := favExists(s.Name)
@@ -460,47 +549,58 @@ func paintKBDetail(dc uintptr) {
 				if faved {
 					sc = colAcc
 				}
-				fillRectColor(dc, sxx, sy, 30, 30, sc)
-				drawTextRect(dc, sxx, sy, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
-				detHits = append(detHits, detHit{sxx, sy, 30, 30, "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
-				drawTextRect(dc, sxx+36, sy, 160, 30, s.Name, fontBody, colFg, dtSingle|dtVCenter)
-				sxx += 200
+				fillRectColor(dc, sx2, curY+40, 30, 30, sc)
+				drawTextRect(dc, sx2, curY+40, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
+				detHits = append(detHits, detHit{sx2, curY + 40, 30, 30, "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
+				drawTextRect(dc, sx2+36, curY+40, 150, 30, s.Name, fontBody, colFg, dtSingle|dtVCenter)
+				sx2 += 192
 			}
-		}
-		if len(detailInfo.Characters) > 0 {
-			cy2 := sty + 96
-			drawTextRect(dc, ix, cy2, 70, 30, "声优", fontNav, colDim, dtSingle|dtVCenter)
-			cxx := ix + 78
-			rows := 0
-			line := 0
-			for _, ch := range detailInfo.Characters {
-				if len(ch.VAs) == 0 {
-					continue
-				}
-				va := ch.VAs[0]
-				faved := favExists(va.Name)
-				sc := uintptr(colCard2)
-				if faved {
-					sc = colAcc
-				}
-				px := cxx + line*170
-				if px+160 > cx+cw-20 {
-					line = 0
-					rows++
-					px = cxx
-				}
-				py := cy2 + rows*34
-				fillRectColor(dc, px, py, 30, 30, sc)
-				drawTextRect(dc, px, py, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
-				detHits = append(detHits, detHit{px, py, 30, 30, "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
-				drawTextRect(dc, px+36, py, 130, 30, va.Name, fontBody, colFg, dtSingle|dtVCenter)
-				line++
-				if rows >= 4 {
-					break
+			curY += 84
+		case "cast":
+			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Characters) == 0 {
+				continue
+			}
+			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "声优 CV", sec, &detHits)
+			shown := 0
+			for row := 0; row < 3 && shown < len(detailInfo.Characters); row++ {
+				cxx := ix + 12
+				for col := 0; col < 4 && shown < len(detailInfo.Characters); col++ {
+					ch := detailInfo.Characters[shown]
+					shown++
+					if len(ch.VAs) == 0 {
+						continue
+					}
+					va := ch.VAs[0]
+					faved := favExists(va.Name)
+					sc := uintptr(colCard2)
+					if faved {
+						sc = colAcc
+					}
+					px := cxx + col*170
+					py := curY + 40 + row*34
+					fillRectColor(dc, px, py, 30, 30, sc)
+					drawTextRect(dc, px, py, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
+					detHits = append(detHits, detHit{px, py, 30, 30, "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
+					drawTextRect(dc, px+36, py, 130, 30, va.Name, fontBody, colFg, dtSingle|dtVCenter)
 				}
 			}
+			curY += 84 + 3*34
+		case "staff":
+			// staff 表：制作人员来自同一详情的角色边（MAIN/SUPPORTING 之外的
+			// 制作公司成员在 Studios 一栏）；这里列出主要制作人员（角色+CV）
+			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Relations) == 0 && len(detailInfo.Studios) == 0 {
+				continue
+			}
+			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "制作人员 Staff", sec, &detHits)
+			staffY := curY + 40
+			for _, s := range detailInfo.Studios {
+				drawTextRect(dc, ix+12, staffY, cw-(ix-cx)-24, 26, "· 制作： "+s.Name, fontBody, colDim, dtSingle)
+				staffY += 30
+			}
+			curY = staffY + 44
 		}
 	}
+	
 	by := bottom - 66
 	bw := 140
 	bh := 48

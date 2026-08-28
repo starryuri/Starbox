@@ -30,6 +30,12 @@ func onKBHit(action, id string) {
 		kbWatchInc(id)
 	case "status":
 		kbSetStatus(detailID, id)
+	case "secup":
+		moveSection(id, -1)
+		return
+	case "secdown":
+		moveSection(id, 1)
+		return
 	case "dettoggle":
 		// id = "<type>|<name>|<alid>"
 		p := strings.SplitN(id, "|", 3)

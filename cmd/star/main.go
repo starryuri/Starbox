@@ -422,6 +422,7 @@ func main() {
 	st = kb.New(dataDir)
 	loadThemeChoice()
 	applyTheme()
+	loadDetailLayout()
 	page = "overview"
 
 
