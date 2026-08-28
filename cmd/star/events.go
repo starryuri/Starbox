@@ -240,7 +240,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 				if bmp != 0 && bits != nil {
 					oldBmp, _, _ := pSelectObject.Call(mem, bmp)
 					fillRectColor(mem, 0, 0, w, h, colBg)
-					sidebarW := 320
+					sidebarW := scale(320)
 					if w > sidebarW {
 						fillRectColor(mem, 0, 0, sidebarW, h, colSide)
 					}

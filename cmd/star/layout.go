@@ -99,10 +99,10 @@ func relayout() {
 	if w <= 0 || h <= 0 {
 		return
 	}
-	sidebarW := 320
-	contentX := sidebarW + 30
-	contentW := w - contentX - 30
-	if contentW < 260 {
+	sidebarW := scale(320)
+	contentX := sidebarW + scale(30)
+	contentW := w - contentX - scale(30)
+	if contentW < scale(260) {
 		contentW = 260
 	}
 	moveWin(hBrand, 30, 30, sidebarW-50, 52)

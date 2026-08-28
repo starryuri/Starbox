@@ -159,6 +159,8 @@ func getCover(id string) *covInfo {
 	return nil
 }
 
+// drawStretch draws the cover fitted (letterboxed) inside the target rect
+// instead of stretching, so portrait covers keep their shape.
 func drawStretch(dc uintptr, x, y, w, h int, ci *covInfo) {
 	if ci == nil || ci.hbmp == 0 || w <= 0 || h <= 0 {
 		return
@@ -166,7 +168,19 @@ func drawStretch(dc uintptr, x, y, w, h int, ci *covInfo) {
 	mem, _, _ := pCreateCompatibleDC.Call(dc)
 	pSelectObject.Call(mem, ci.hbmp)
 	pSetStretchBltMode.Call(dc, colorOnColor)
-	pStretchBlt.Call(dc, uintptr(x), uintptr(y), uintptr(w), uintptr(h),
+	// fit rect: largest box that preserves the image aspect ratio
+	dw, dh := w, h
+	if ci.w > 0 && ci.h > 0 {
+		srcRatio := float64(ci.w) / float64(ci.h)
+		boxRatio := float64(w) / float64(h)
+		if srcRatio < boxRatio {
+			dw = int(float64(h) * srcRatio)
+		} else {
+			dh = int(float64(w) / srcRatio)
+		}
+	}
+	ox, oy := x+(w-dw)/2, y+(h-dh)/2
+	pStretchBlt.Call(dc, uintptr(ox), uintptr(oy), uintptr(dw), uintptr(dh),
 		mem, 0, 0, uintptr(ci.w), uintptr(ci.h), srcCopy)
 	pDeleteDC.Call(mem)
 }
@@ -201,10 +215,10 @@ func kbCardMode() bool { return page == "kb" && kbCol == "anime" }
 
 func kbGeom() (cx, cw, top, bottom int) {
 	w, h := clientSize()
-	sidebarW := 320
-	contentX := sidebarW + 30
-	contentW := w - contentX - 30
-	if contentW < 260 {
+	sidebarW := scale(320)
+	contentX := sidebarW + scale(30)
+	contentW := w - contentX - scale(30)
+	if contentW < scale(260) {
 		contentW = 260
 	}
 	top = 240

@@ -271,11 +271,26 @@ func notifyPush(key, typ, title, body string, unix int64) {
 		"type":  typ,
 		"read":  false,
 		"unix":  float64(unix),
+		"link":  "",
 	}
 	if key != "" {
 		data["key"] = key
 	}
 	_, _ = st.Add("notif", data)
+}
+
+// setNotifLink attaches a click-through link to the most recent notification
+// with this dedupe key (used by airing reminders).
+func setNotifLink(key, link string) {
+	recs, _ := st.List("notif")
+	for i := len(recs) - 1; i >= 0; i-- {
+		if k, _ := recs[i].Data["key"].(string); k == key {
+			d := copyMap(recs[i].Data)
+			d["link"] = link
+			_, _ = st.Update("notif", recs[i].ID, d)
+			return
+		}
+	}
 }
 
 // collectAiringNotifs turns upcoming AniList episodes of tracked anime into
@@ -307,7 +322,9 @@ func collectAiringNotifs() {
 		}
 		key := "airing-" + strconv.Itoa(u.MediaID) + "-" + strconv.Itoa(u.Episode)
 		when := time.Unix(u.AiringAt, 0).Format("01-02 15:04")
+		page := "https://anilist.co/anime/" + strconv.Itoa(u.MediaID)
 		notifyPush(key, "追更", u.Title+" 第 "+strconv.Itoa(u.Episode)+" 集", when+" 播出", u.AiringAt)
+		setNotifLink(key, page)
 	}
 }
 
@@ -344,6 +361,9 @@ func collectFeedNotifs() {
 				key = task.ID + "-" + it.Title
 			}
 			notifyPush("feed-"+key, "订阅", it.Title, feed.Title+" · 更新", now)
+			if it.Link != "" {
+				setNotifLink("feed-"+key, it.Link)
+			}
 		}
 	}
 }

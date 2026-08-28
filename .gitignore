@@ -4,6 +4,8 @@ data/
 *.local.json
 
 # ===== 构建产物 =====
+_old_binaries/
+
 butler-gui.exe
 butler.exe
 *.exe

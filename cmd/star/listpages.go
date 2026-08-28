@@ -193,13 +193,18 @@ func onListHit(action, id string) {
 		}
 	case "row":
 		if listPage == "notify" {
+			var link string
 			if rec := findRec("notif", id); rec != nil {
 				d := copyMap(rec.Data)
 				d["read"] = true
+				link, _ = d["link"].(string)
 				_, _ = st.Update("notif", id, d)
 			}
 			refreshList()
 			pInvalidateRect.Call(hwndMain, 0, 1)
+			if link != "" {
+				openURL(link)
+			}
 		} else if listPage == "favs" {
 			favDetailID = id
 			favWorks = nil
