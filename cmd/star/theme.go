@@ -100,7 +100,7 @@ func applyTheme() {
 	brushCard, _, _ = pCreateSolidBrush.Call(colCard)
 }
 
-func themeFilePath() string { return filepath.Join(dataDir, "theme.json") }
+func themeFilePath() string { return filepath.Join(curProfDir, "theme.json") }
 
 func loadThemeChoice() {
 	b, err := os.ReadFile(themeFilePath())

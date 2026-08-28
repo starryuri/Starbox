@@ -164,7 +164,7 @@ func getCover(id string) *covInfo {
 
 var detailSections = []string{"meta", "studios", "cast", "staff"} // default order
 
-func detailLayoutPath() string { return filepath.Join(dataDir, "detail_layout.json") }
+func detailLayoutPath() string { return filepath.Join(curProfDir, "detail_layout.json") }
 
 func loadDetailLayout() {
 	b, err := os.ReadFile(detailLayoutPath())

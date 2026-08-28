@@ -6,6 +6,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"fmt"
 	"unsafe"
 
 
@@ -155,6 +156,12 @@ func relayout() {
 	moveWin(hThD, contentX+scale(320), 174, scale(150), 44)
 	moveWin(hQuitE, contentX, 236, scale(300), 44)
 	moveWin(hQuitT, contentX+scale(310), 236, scale(390), 44)
+	moveWin(hProfLabel, contentX, 298, scale(700), 36)
+	moveWin(hProfPrev, contentX, 344, scale(130), 40)
+	moveWin(hProfNext, contentX+scale(140), 344, scale(130), 40)
+	moveWin(hProfName, contentX+scale(286), 346, scale(240), 38)
+	moveWin(hProfNew, contentX+scale(536), 344, scale(130), 40)
+	moveWin(hProfDel, contentX+scale(676), 344, scale(130), 40)
 	kbgap := 8
 	kbw := (contentW - 4*kbgap) / 5
 	if kbw < 110 {
@@ -175,6 +182,13 @@ func relayout() {
 		refreshKB()
 	}
 	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
+// updateProfLabel refreshes the identity line on the settings page.
+func updateProfLabel() {
+	if hProfLabel != 0 {
+		setText(hProfLabel, "当前身份： "+currentProfileName()+"  （身份共 "+fmt.Sprintf("%d", len(profiles))+" 个，每个身份拥有独立的番剧库/收藏/主题/设置）")
+	}
 }
 
 func renderPage() {
@@ -204,6 +218,12 @@ func renderPage() {
 	pShowWindow.Call(hThD, pBool(setSet))
 	pShowWindow.Call(hQuitE, pBool(setSet))
 	pShowWindow.Call(hQuitT, pBool(setSet))
+	pShowWindow.Call(hProfLabel, pBool(setSet))
+	pShowWindow.Call(hProfPrev, pBool(setSet))
+	pShowWindow.Call(hProfNext, pBool(setSet))
+	pShowWindow.Call(hProfName, pBool(setSet))
+	pShowWindow.Call(hProfNew, pBool(setSet))
+	pShowWindow.Call(hProfDel, pBool(setSet))
 	for i := range kbCols {
 		pShowWindow.Call(hKbTab[i], pBool(kbon))
 	}
@@ -230,6 +250,7 @@ func renderPage() {
 		stt := settings.Load(dataDir)
 		pSendMessage.Call(hAuto, 0x00F1, pBool(stt.AutoStart), 0) // BM_SETCHECK
 		pSendMessage.Call(hSilent, 0x00F1, pBool(stt.SilentStart), 0)
+		updateProfLabel()
 		if stt.QuitAction == "exit" {
 			pSendMessage.Call(hQuitE, 0x00F1, 1, 0)
 			pSendMessage.Call(hQuitT, 0x00F1, 0, 0)

@@ -59,6 +59,11 @@ const (
 	IDQuitE = 606 // quit action: exit
 	IDQuitT = 607 // quit action: to tray (reserved)
 	IDSilent = 608 // silent start
+	IDProfPrev = 609
+	IDProfNext = 610
+	IDProfNew  = 611
+	IDProfDel  = 612
+	IDProfName = 613
 	KBTab    = 701 // 5 tabs: 701..705
 	KBToA    = 706 // add title edit
 	KBAdd    = 707 // add button
@@ -199,6 +204,9 @@ var (
 	hThN, hThS, hThD    uintptr
 	hQuitE, hQuitT      uintptr
 	hSilent             uintptr
+	hProfPrev, hProfNext uintptr
+	hProfName, hProfNew, hProfDel uintptr
+	hProfLabel          uintptr
 	optSilent           bool
 	kbCol               string
 	hKbTab              [5]uintptr
@@ -419,7 +427,8 @@ func main() {
 	coverDir = filepath.Join(dataDir, "covers")
 	_ = os.MkdirAll(coverDir, 0o755)
 	cfg, _ = config.Load(filepath.Join(filepath.Dir(exe), "config.json"))
-	st = kb.New(dataDir)
+	initProfiles() // migrate legacy data on first run + resolve identity
+	st = kb.New(curProfDir)
 	loadThemeChoice()
 	applyTheme()
 	loadDetailLayout()
@@ -495,6 +504,13 @@ func main() {
 	// quit action
 	hQuitE = createChild("BUTTON", "关闭窗口 = 退出程序", bsAutoCheckBox, IDQuitE, 310, 232, 300, 40, fontNav)
 	hQuitT = createChild("BUTTON", "关闭窗口 = 收纳到托盘（需托盘支持）", bsAutoCheckBox, IDQuitT, 620, 232, 380, 40, fontNav)
+	// identity (账户) row
+	hProfLabel = createChild("STATIC", "", ssLeft, 0, 310, 296, 700, 36, fontNav)
+	hProfPrev = createChild("BUTTON", "◀ 上一个", bsOwnerDraw, IDProfPrev, 310, 340, 130, 40, fontNav)
+	hProfNext = createChild("BUTTON", "下一个 ▶", bsOwnerDraw, IDProfNext, 450, 340, 130, 40, fontNav)
+	hProfName = createChild("EDIT", "", esAutoHScroll, IDProfName, 596, 342, 240, 38, fontBody)
+	hProfNew = createChild("BUTTON", "新建身份", bsOwnerDraw, IDProfNew, 846, 340, 130, 40, fontNav)
+	hProfDel = createChild("BUTTON", "删除当前", bsOwnerDraw, IDProfDel, 986, 340, 130, 40, fontNav)
 	// kb page controls
 	kbCol = "anime"
 	for i := range kbCols {

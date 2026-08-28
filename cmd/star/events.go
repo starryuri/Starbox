@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"golang.org/x/sys/windows"
 
 	"butler/internal/settings"
 
@@ -66,6 +67,11 @@ func paintFragment(dc uintptr) {
 	}
 }
 
+func getEditContent(h uintptr) string {
+	buf := make([]uint16, 256)
+	n, _, _ := pSendMessage.Call(h, 0x000D, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
+	return windows.UTF16ToString(buf[:n])
+}
 func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintptr {
 	switch msg {
 	case 0x0111: // WM_COMMAND
@@ -122,6 +128,37 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			pSendMessage.Call(hQuitE, 0x00F1, 0, 0) // uncheck exit
 			return 0
 		}
+		if id == IDProfPrev {
+			cycleProfile(-1)
+			updateProfLabel()
+			return 0
+		}
+		if id == IDProfNext {
+			cycleProfile(1)
+			updateProfLabel()
+			return 0
+		}
+		if id == IDProfNew {
+			name := getEditContent(hProfName)
+			if newID, err := createProfile(name); err != nil {
+				SetError("%v", err)
+			} else {
+				setText(hProfName, "")
+				switchProfileTo(newID)
+				updateProfLabel()
+				SetStatus("身份「%s」已创建并切换", name)
+			}
+			return 0
+		}
+		if id == IDProfDel {
+			if err := deleteProfile(currentProfID); err != nil {
+				SetError("%v", err)
+			} else {
+				SetStatus("已删除")
+				updateProfLabel()
+			}
+			return 0
+		}
 		if id == IDSaveS {
 			on := uintptr(0)
 			r, _, _ := pSendMessage.Call(hAuto, 0x00F0, 0, 0) // BM_GETCHECK
@@ -131,7 +168,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			silent := uintptr(0)
 			pSendMessage.Call(hSilent, 0x00F0, 0, 0) // BM_GETCHECK
 			silent = func() uintptr { v, _, _ := pSendMessage.Call(hSilent, 0x00F0, 0, 0); return v }()
-			stt := settings.Load(dataDir)
+			stt := settings.Load(curProfDir)
 			stt.AutoStart = on == 1
 			stt.SilentStart = silent == 1
 			qe, _, _ := pSendMessage.Call(hQuitE, 0x00F0, 0, 0)
@@ -148,7 +185,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			} else {
 				SetStatus("已关闭开机自启动")
 			}
-			if err := settings.Save(dataDir, stt); err != nil {
+			if err := settings.Save(curProfDir, stt); err != nil {
 				SetError("保存设置失败：%v", err)
 			}
 			pInvalidateRect.Call(hwndMain, 0, 1)
