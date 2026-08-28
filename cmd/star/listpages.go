@@ -68,7 +68,13 @@ func refreshList() {
 			} else if typ == "cv" {
 				tag = "声优"
 			}
-			listRows = append(listRows, listRow{id: r.ID, title: name, sub: typ, tag: tag})
+			sub := "制作公司"
+			if typ == "cv" {
+				sub = "声优 / 配音"
+			} else if typ != "studio" {
+				sub = typ
+			}
+			listRows = append(listRows, listRow{id: r.ID, title: name, sub: sub, tag: tag})
 		}
 	case "rules":
 		for _, r := range recs {
