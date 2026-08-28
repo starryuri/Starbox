@@ -102,14 +102,44 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			refreshMyRepos()
 			return 0
 		}
+		if id == IDThN {
+			switchTheme("night")
+			return 0
+		}
+		if id == IDThS {
+			switchTheme("sakura")
+			return 0
+		}
+		if id == IDThD {
+			switchTheme("day")
+			return 0
+		}
+		if id == IDQuitE {
+			pSendMessage.Call(hQuitT, 0x00F1, 0, 0) // uncheck tray
+			return 0
+		}
+		if id == IDQuitT {
+			pSendMessage.Call(hQuitE, 0x00F1, 0, 0) // uncheck exit
+			return 0
+		}
 		if id == IDSaveS {
 			on := uintptr(0)
 			r, _, _ := pSendMessage.Call(hAuto, 0x00F0, 0, 0) // BM_GETCHECK
 			if r == 1 {
 				on = 1
 			}
+			silent := uintptr(0)
+			pSendMessage.Call(hSilent, 0x00F0, 0, 0) // BM_GETCHECK
+			silent = func() uintptr { v, _, _ := pSendMessage.Call(hSilent, 0x00F0, 0, 0); return v }()
 			stt := settings.Load(dataDir)
 			stt.AutoStart = on == 1
+			stt.SilentStart = silent == 1
+			qe, _, _ := pSendMessage.Call(hQuitE, 0x00F0, 0, 0)
+			if qe == 1 {
+				stt.QuitAction = "exit"
+			} else {
+				stt.QuitAction = "tray"
+			}
 			exe, _ := os.Executable()
 			if err := settings.SetAutoStart(stt.AutoStart, exe); err != nil {
 				SetError("自启动设置失败：%v", err)

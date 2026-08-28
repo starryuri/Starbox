@@ -147,8 +147,14 @@ func relayout() {
 	moveWin(hReffMine, contentX+150, 246, 140, 44)
 	moveWin(hHint, contentX+150, 248, contentW-150, 36)
 	moveWin(hInfo, contentX, 306, contentW, h-306-34)
-	moveWin(hAuto, contentX, 106, 300, 50)
-	moveWin(hAutoSave, contentX+310, 104, 130, 52)
+	moveWin(hAuto, contentX, 106, scale(240), 50)
+	moveWin(hSilent, contentX+scale(250), 106, scale(340), 50)
+	moveWin(hAutoSave, contentX+scale(600), 104, scale(130), 52)
+	moveWin(hThN, contentX, 174, scale(150), 44)
+	moveWin(hThS, contentX+scale(160), 174, scale(150), 44)
+	moveWin(hThD, contentX+scale(320), 174, scale(150), 44)
+	moveWin(hQuitE, contentX, 236, scale(300), 44)
+	moveWin(hQuitT, contentX+scale(310), 236, scale(390), 44)
 	kbgap := 8
 	kbw := (contentW - 4*kbgap) / 5
 	if kbw < 110 {
@@ -191,7 +197,13 @@ func renderPage() {
 	pShowWindow.Call(hHint, pBool(insight))
 	pShowWindow.Call(hInfo, pBool(insight))
 	pShowWindow.Call(hAuto, pBool(setSet))
+	pShowWindow.Call(hSilent, pBool(setSet))
 	pShowWindow.Call(hAutoSave, pBool(setSet))
+	pShowWindow.Call(hThN, pBool(setSet))
+	pShowWindow.Call(hThS, pBool(setSet))
+	pShowWindow.Call(hThD, pBool(setSet))
+	pShowWindow.Call(hQuitE, pBool(setSet))
+	pShowWindow.Call(hQuitT, pBool(setSet))
 	for i := range kbCols {
 		pShowWindow.Call(hKbTab[i], pBool(kbon))
 	}
@@ -215,8 +227,17 @@ func renderPage() {
 		loadBind()
 		loadInsight()
 	case setSet:
-		pSendMessage.Call(hAuto, 0x00F1, pBool(settings.Load(dataDir).AutoStart), 0) // BM_SETCHECK
-		body = "设置：\n\n（设置页其余选项后续接入）"
+		stt := settings.Load(dataDir)
+		pSendMessage.Call(hAuto, 0x00F1, pBool(stt.AutoStart), 0) // BM_SETCHECK
+		pSendMessage.Call(hSilent, 0x00F1, pBool(stt.SilentStart), 0)
+		if stt.QuitAction == "exit" {
+			pSendMessage.Call(hQuitE, 0x00F1, 1, 0)
+			pSendMessage.Call(hQuitT, 0x00F1, 0, 0)
+		} else {
+			pSendMessage.Call(hQuitE, 0x00F1, 0, 0)
+			pSendMessage.Call(hQuitT, 0x00F1, 1, 0)
+		}
+		body = ""
 	case kbon:
 		if cm {
 			refreshKB()

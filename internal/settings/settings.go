@@ -17,6 +17,7 @@ import (
 type Settings struct {
 	AutoStart  bool   `json:"auto_start"`  // register in HKCU Run so it launches at boot
 	QuitAction string `json:"quit_action"` // "exit" = close window quits app; "tray" = keep in tray
+	SilentStart bool`json:"silent_start"` // start minimized/silent (paired with -silent flag)
 }
 
 const runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`

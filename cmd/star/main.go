@@ -53,6 +53,12 @@ const (
 	IDHint  = 510
 	IDAuto  = 601
 	IDSaveS = 602
+	IDThN   = 603 // theme: night
+	IDThS   = 604 // theme: sakura
+	IDThD   = 605 // theme: day
+	IDQuitE = 606 // quit action: exit
+	IDQuitT = 607 // quit action: to tray (reserved)
+	IDSilent = 608 // silent start
 	KBTab    = 701 // 5 tabs: 701..705
 	KBToA    = 706 // add title edit
 	KBAdd    = 707 // add button
@@ -190,6 +196,10 @@ var (
 	hReff, hInfo, hHint uintptr
 	hReffMine           uintptr
 	hAuto, hAutoSave    uintptr
+	hThN, hThS, hThD    uintptr
+	hQuitE, hQuitT      uintptr
+	hSilent             uintptr
+	optSilent           bool
 	kbCol               string
 	hKbTab              [5]uintptr
 	hKbToA, hKbAddBtn   uintptr
@@ -474,8 +484,16 @@ func main() {
 	hHint = createChild("STATIC", "", ssLeft, IDHint, 440, 220, 760, 26, fontNav)
 	hInfo = createChild("STATIC", "", ssLeft, IDInfo, 310, 264, 940, 440, fontBody)
 	// settings page controls
-	hAuto = createChild("BUTTON", "开机自启动", bsAutoCheckBox, IDAuto, 310, 120, 220, 40, fontNav)
-	hAutoSave = createChild("BUTTON", "保存", 0, IDSaveS, 540, 118, 110, 40, fontNav)
+	hAuto = createChild("BUTTON", "开机自启动", bsAutoCheckBox, IDAuto, 310, 120, 240, 40, fontNav)
+	hSilent = createChild("BUTTON", "静默启动（自启动时不弹窗）", bsAutoCheckBox, IDSilent, 560, 120, 340, 40, fontNav)
+	hAutoSave = createChild("BUTTON", "保存设置", 0, IDSaveS, 910, 118, 130, 40, fontNav)
+	// theme row
+	hThN = createChild("BUTTON", "暗夜", bsOwnerDraw, IDThN, 310, 174, 150, 44, fontNav)
+	hThS = createChild("BUTTON", "樱夜", bsOwnerDraw, IDThS, 470, 174, 150, 44, fontNav)
+	hThD = createChild("BUTTON", "白天", bsOwnerDraw, IDThD, 630, 174, 150, 44, fontNav)
+	// quit action
+	hQuitE = createChild("BUTTON", "关闭窗口 = 退出程序", bsAutoCheckBox, IDQuitE, 310, 232, 300, 40, fontNav)
+	hQuitT = createChild("BUTTON", "关闭窗口 = 收纳到托盘（需托盘支持）", bsAutoCheckBox, IDQuitT, 620, 232, 380, 40, fontNav)
 	// kb page controls
 	kbCol = "anime"
 	for i := range kbCols {
