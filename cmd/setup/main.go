@@ -793,7 +793,9 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			pEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		}
 		return 0
-	case 0x0134: // WM_CTLCOLOREDIT — dark edit
+	case 0x002B: // WM_DRAWITEM — owner-draw buttons (缺失会导致按钮变成白色空块)
+		return drawItem(wParam, lParam)
+	case 0x0133: // WM_CTLCOLOREDIT — dark edit
 		pSetTextColor.Call(wParam, colFg)
 		pSetBkMode.Call(wParam, 0)
 		pSetBkMode2(wParam)

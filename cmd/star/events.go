@@ -389,7 +389,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		return 0
 	case 0x002B: // WM_DRAWITEM
 		return drawItem(uintptr(lParam))
-	case 0x0134: // WM_CTLCOLOREDIT
+	case 0x0133: // WM_CTLCOLOREDIT
 		pSetTextColor.Call(wParam, colFg)
 		pSetBkMode.Call(wParam, 1)
 		pSetBkColor.Call(wParam, colSide)

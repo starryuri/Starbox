@@ -106,8 +106,8 @@ func relayout() {
 	if contentW < scale(260) {
 		contentW = 260
 	}
-	moveWin(hBrand, 30, 30, sidebarW-50, 52)
-	moveWin(hTag, 30, 94, sidebarW-50, 32)
+	moveWin(hBrand, 26, 26, sidebarW-44, 60)
+	moveWin(hTag, 26, 96, sidebarW-44, 36)
 	navH := 64
 	for i := range pages {
 		moveWin(hNav[i], 26, 138+i*navH, sidebarW-54, navH-8)
@@ -149,19 +149,19 @@ func relayout() {
 	moveWin(hHint, contentX+150, 248, contentW-150, 36)
 	moveWin(hInfo, contentX, 306, contentW, h-306-34)
 	moveWin(hAuto, contentX, 106, scale(240), 50)
-	moveWin(hSilent, contentX+scale(250), 106, scale(340), 50)
-	moveWin(hAutoSave, contentX+scale(600), 104, scale(130), 52)
-	moveWin(hThN, contentX, 174, scale(150), 44)
-	moveWin(hThS, contentX+scale(160), 174, scale(150), 44)
-	moveWin(hThD, contentX+scale(320), 174, scale(150), 44)
-	moveWin(hQuitE, contentX, 236, scale(300), 44)
-	moveWin(hQuitT, contentX+scale(310), 236, scale(390), 44)
-	moveWin(hProfLabel, contentX, 298, scale(700), 36)
-	moveWin(hProfPrev, contentX, 344, scale(130), 40)
-	moveWin(hProfNext, contentX+scale(140), 344, scale(130), 40)
-	moveWin(hProfName, contentX+scale(286), 346, scale(240), 38)
-	moveWin(hProfNew, contentX+scale(536), 344, scale(130), 40)
-	moveWin(hProfDel, contentX+scale(676), 344, scale(130), 40)
+	moveWin(hSilent, contentX+scale(260), 106, scale(420), 50)
+	moveWin(hAutoSave, contentX, 166, scale(150), 44)
+	moveWin(hThN, contentX, 222, scale(150), 44)
+	moveWin(hThS, contentX+scale(160), 222, scale(150), 44)
+	moveWin(hThD, contentX+scale(320), 222, scale(150), 44)
+	moveWin(hQuitE, contentX, 286, scale(300), 44)
+	moveWin(hQuitT, contentX+scale(320), 286, scale(560), 44)
+	moveWin(hProfLabel, contentX, 366, scale(900), 36)
+	moveWin(hProfPrev, contentX, 412, scale(130), 42)
+	moveWin(hProfNext, contentX+scale(140), 412, scale(130), 42)
+	moveWin(hProfName, contentX+scale(290), 414, scale(220), 40)
+	moveWin(hProfNew, contentX+scale(520), 412, scale(130), 42)
+	moveWin(hProfDel, contentX+scale(660), 412, scale(130), 42)
 	kbgap := 8
 	kbw := (contentW - 4*kbgap) / 5
 	if kbw < 110 {

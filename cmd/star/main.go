@@ -405,6 +405,25 @@ func drawItem(diPtr uintptr) uintptr {
 		}
 		drawBtn(di, fill, tc)
 		return 1
+	case id == IDSaveS || id == IDSave:
+		drawBtn(di, colAcc, colOnAcc)
+		return 1
+	case id == IDReff || id == IDReffMine || id == IDProfPrev || id == IDProfNext || id == IDProfNew || id == IDProfDel:
+		drawBtn(di, colCard2, colFg)
+		return 1
+	case id == IDThN || id == IDThS || id == IDThD:
+		want := "day"
+		if id == IDThN {
+			want = "night"
+		} else if id == IDThS {
+			want = "sakura"
+		}
+		if activeThemeID == want {
+			drawBtn(di, colAcc, colOnAcc)
+		} else {
+			drawBtn(di, colCard2, colFg)
+		}
+		return 1
 	}
 	r, _, _ := pDefWindowProc.Call(hwndMain, 0x002B, 0, 0)
 	return r
@@ -469,7 +488,7 @@ func main() {
 	fontBody = createWin32Font(23, false)
 	fontTiny = createWin32Font(18, false)
 
-	hBrand = createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 30, 30, 230, 42, fontTitle)
+	hBrand = createChild("STATIC", "星匣 STARBOX", ssLeft, IDBrand, 26, 26, 290, 60, fontTitle)
 	hTag = createChild("STATIC", "你的次元 · 收于一匣", ssLeft, 0, 30, 86, 230, 26, fontNav)
 	for i, p := range pages {
 		label := pageLabels[p]
@@ -489,15 +508,15 @@ func main() {
 	}
 	hAcc = createChild("EDIT", "", esAutoHScroll|wsTabStop, IDAcc, 310, 160, 380, 32, fontBody)
 	hPass = createChild("EDIT", "", esAutoHScroll|esPassword|wsTabStop, IDPass, 700, 160, 380, 32, fontBody)
-	hSave = createChild("BUTTON", "保存账号", 0, IDSave, 1092, 158, 120, 36, fontNav)
-	hReff = createChild("BUTTON", "刷新热门", 0, IDReff, 310, 214, 120, 34, fontNav)
-	hReffMine = createChild("BUTTON", "我的仓库", 0, IDReffMine, 440, 214, 120, 34, fontNav)
+	hSave = createChild("BUTTON", "保存账号", bsOwnerDraw, IDSave, 1092, 158, 120, 36, fontNav)
+	hReff = createChild("BUTTON", "刷新热门", bsOwnerDraw, IDReff, 310, 214, 120, 34, fontNav)
+	hReffMine = createChild("BUTTON", "我的仓库", bsOwnerDraw, IDReffMine, 440, 214, 120, 34, fontNav)
 	hHint = createChild("STATIC", "", ssLeft, IDHint, 440, 220, 760, 26, fontNav)
 	hInfo = createChild("STATIC", "", ssLeft, IDInfo, 310, 264, 940, 440, fontBody)
 	// settings page controls
 	hAuto = createChild("BUTTON", "开机自启动", bsAutoCheckBox, IDAuto, 310, 120, 240, 40, fontNav)
 	hSilent = createChild("BUTTON", "静默启动（自启动时不弹窗）", bsAutoCheckBox, IDSilent, 560, 120, 340, 40, fontNav)
-	hAutoSave = createChild("BUTTON", "保存设置", 0, IDSaveS, 910, 118, 130, 40, fontNav)
+	hAutoSave = createChild("BUTTON", "保存设置", bsOwnerDraw, IDSaveS, 910, 118, 130, 40, fontNav)
 	// theme row
 	hThN = createChild("BUTTON", "暗夜", bsOwnerDraw, IDThN, 310, 174, 150, 44, fontNav)
 	hThS = createChild("BUTTON", "樱夜", bsOwnerDraw, IDThS, 470, 174, 150, 44, fontNav)
@@ -525,6 +544,7 @@ func main() {
 	pSetWindowTheme.Call(hKbToA, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
 	pSetWindowTheme.Call(hAcc, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
 	pSetWindowTheme.Call(hPass, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
+	pSetWindowTheme.Call(hProfName, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))
 	// forward wheel messages from the edits so scrolling never dies after typing
 	subclassEditWheel(hKbToA)
 	subclassEditWheel(hAcc)

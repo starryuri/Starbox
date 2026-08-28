@@ -95,9 +95,9 @@ func paintListPage(dc uintptr) {
 		drawTextRect(dc, ax, hy, aw, ah, listActL, fontNav, colOnAcc, dtSingle|dtVCenter|dtCenter)
 		listHits = append(listHits, detHit{ax, hy, aw, ah, "listaction", ""})
 	}
-	ry := top + 60
-	rh := 88
-	gap := 12
+	ry := top + 64
+	rh := 112
+	gap := 14
 	if len(listRows) == 0 {
 		msg := "（暂无条目）"
 		switch listPage {
@@ -140,7 +140,7 @@ func paintListPage(dc uintptr) {
 		}
 		// delete button (books/study/games/notes/favs rows), right side
 		if listPage != "notify" {
-			dbw, dbh := 64, 34
+			dbw, dbh := 72, 38
 			dbx := cx + cw - 12 - dbw - 10
 			dby := y + (rh-dbh)/2
 			delFill := uintptr(colRed)
@@ -153,17 +153,17 @@ func paintListPage(dc uintptr) {
 		}
 		tx := cx + 24
 		if row.tag != "" {
-			tw := 64
-			fillRectColor(dc, cx+24, y+10, tw, 26, colAcc)
-			drawTextRect(dc, cx+24, y+10, tw, 26, row.tag, fontTiny, colOnAcc, dtSingle|dtVCenter|dtCenter)
-			tx = cx + 24 + 72
+			tw := 72
+			fillRectColor(dc, cx+24, y+16, tw, 30, colAcc)
+			drawTextRect(dc, cx+24, y+16, tw, 30, row.tag, fontTiny, colOnAcc, dtSingle|dtVCenter|dtCenter)
+			tx = cx + 24 + 84
 		}
 		rightPad := cw - 12 - (tx - cx) - 12
 		if rightPad < 20 {
 			rightPad = 20
 		}
-		drawTextRect(dc, tx, y+8, rightPad, 30, row.title, fontCard, colFg, dtSingle|0x00008000)
-		drawTextRect(dc, tx, y+40, rightPad, 24, row.sub, fontBody, colDim, dtSingle)
+		drawTextRect(dc, tx, y+10, rightPad, 42, row.title, fontCard, colFg, dtSingle|0x00008000)
+		drawTextRect(dc, tx, y+60, rightPad, 30, row.sub, fontBody, colDim, dtSingle)
 		listHits = append(listHits, detHit{cx + 12, y, cw - 24, rh, "row", row.id})
 	}
 }

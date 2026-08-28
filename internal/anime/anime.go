@@ -1,6 +1,7 @@
 package anime
 
 import (
+	"crypto/tls"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -889,11 +890,19 @@ type XinyuuDetail struct {
 	Characters []XinyuuCharacter `json:"characters"`
 }
 
+// xinyuuTransport tolerates the incomplete TLS chain db.xinyuu.cn serves to
+// some Windows clients (read-only public metadata API, no credentials sent).
+var xinyuuTransport = func() http.RoundTripper {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	return tr
+}()
+
 func xinyuuGet(path string, out interface{}) error {
 	req, _ := http.NewRequest(http.MethodGet, xinyuuBase+path, nil)
 	req.Header.Set("User-Agent", moegirlUA)
 	req.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second, Transport: xinyuuTransport}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

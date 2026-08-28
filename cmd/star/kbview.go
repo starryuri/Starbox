@@ -359,7 +359,7 @@ func kbs2cards() []kbCard {
 		cardW = 120
 	}
 	coverH := cardW * 14 / 10
-	titleH := 70
+	titleH := 84
 	cardH := coverH + titleH
 	out := make([]kbCard, 0, len(kbRecs))
 	for i, r := range kbRecs {
@@ -413,10 +413,10 @@ func paintKBCards(dc uintptr) {
 		}
 		ty := c.y + coverH
 		// DT_END_ELLIPSIS (0x00008000): "长标题…" instead of mid-glyph cut
-		drawTextRect(dc, c.x+6, ty+2, c.w-12, 40, c.title, fontCard, colFg, dtSingle|0x00008000)
+		drawTextRect(dc, c.x+6, ty+4, c.w-12, 44, c.title, fontCard, colFg, dtSingle|0x00008000)
 		sc := statusColor(c.status)
-		fillRectColor(dc, c.x+6, ty+44, c.w-12, 26, sc)
-		drawTextRect(dc, c.x+6, ty+44, c.w-12, 26, c.status, fontTiny, colOnAcc, dtSingle|dtVCenter)
+		fillRectColor(dc, c.x+6, ty+52, c.w-12, 30, sc)
+		drawTextRect(dc, c.x+6, ty+52, c.w-12, 30, c.status, fontTiny, colOnAcc, dtSingle|dtVCenter)
 	}
 }
 
@@ -488,8 +488,8 @@ func paintKBDetail(dc uintptr) {
 	if iw < 140 {
 		iw = 140
 	}
-	drawTextRect(dc, ix, top+pad, iw, 52, title, fontTitle, colFg, dtWordBreak)
-	sty := top + pad + 62
+	drawTextRect(dc, ix, top+pad, iw, 60, title, fontTitle, colFg, dtSingle|0x00008000)
+	sty := top + pad + 84
 	drawTextRect(dc, ix, sty, 70, 38, "状态", fontNav, colDim, dtSingle|dtVCenter)
 	sx := ix + 78
 	for _, s := range []string{"想追", "在看", "看过", "搁置"} {
@@ -506,13 +506,13 @@ func paintKBDetail(dc uintptr) {
 		detHits = append(detHits, detHit{sx, sty, w, 38, "status", s})
 		sx += w + 10
 	}
-	my := sty + 56
+	my := sty + 64
 	// 简介 note (always right under the status chips)
 	if note != "" {
-		drawTextRect(dc, ix, my, iw, 96, note, fontBody, colFg, dtWordBreak)
+		drawTextRect(dc, ix, my, iw, 93, note, fontBody, colFg, dtWordBreak|0x00008000)
 	}
 	// sections render in user-configured order (↑/↓ arrows on each header)
-	curY := my + 110
+	curY := my + 120
 	drawn := map[string]bool{}
 	for _, sec := range detailSections {
 		if drawn[sec] {
@@ -532,7 +532,7 @@ func paintKBDetail(dc uintptr) {
 				meta += "    播出 " + air
 			}
 			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "信息", sec, &detHits)
-			drawTextRect(dc, ix, curY+40, cw-(ix-cx)-20, 30, meta, fontBody, colDim, dtSingle|dtVCenter)
+			drawTextRect(dc, ix, curY+40, cw-(ix-cx)-20, 30, meta, fontBody, colDim, dtSingle|dtVCenter|0x00008000)
 			curY += 84
 		case "studios":
 			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Studios) == 0 {
@@ -552,8 +552,8 @@ func paintKBDetail(dc uintptr) {
 				fillRectColor(dc, sx2, curY+40, 30, 30, sc)
 				drawTextRect(dc, sx2, curY+40, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
 				detHits = append(detHits, detHit{sx2, curY + 40, 30, 30, "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
-				drawTextRect(dc, sx2+36, curY+40, 150, 30, s.Name, fontBody, colFg, dtSingle|dtVCenter)
-				sx2 += 192
+				drawTextRect(dc, sx2+36, curY+40, 210, 30, s.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
+				sx2 += 256
 			}
 			curY += 84
 		case "cast":
@@ -581,7 +581,7 @@ func paintKBDetail(dc uintptr) {
 					fillRectColor(dc, px, py, 30, 30, sc)
 					drawTextRect(dc, px, py, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
 					detHits = append(detHits, detHit{px, py, 30, 30, "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
-					drawTextRect(dc, px+36, py, 130, 30, va.Name, fontBody, colFg, dtSingle|dtVCenter)
+					drawTextRect(dc, px+36, py, 160, 30, va.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
 				}
 			}
 			curY += 84 + 3*34
@@ -601,9 +601,9 @@ func paintKBDetail(dc uintptr) {
 		}
 	}
 	
-	by := bottom - 66
-	bw := 140
-	bh := 48
+	by := bottom - 76
+	bw := 150
+	bh := 56
 	// back
 	backFill := uintptr(colCard2)
 	if hoverAct == "back" {
@@ -635,8 +635,8 @@ func paintKBDetail(dc uintptr) {
 	if link, _ := data["link"].(string); link != "" {
 		// draw a real, clickable-looking link bar at the bottom of the info column
 		lw2 := iw
-		if lw2 > bw {
-			lw2 = bw
+		if lw2 > 340 {
+			lw2 = 340
 		}
 		drawTextRect(dc, ix, by-34, lw2, 34, "链接: "+link, fontTiny, colAcc, dtSingle|dtVCenter)
 		detHits = append(detHits, detHit{ix, by - 34, lw2, 34, "openlink", link})
@@ -779,7 +779,54 @@ func fetchDetailAsync(id string) {
 	}
 	v, _ := rec.Data["anilist_id"].(string)
 	if v == "" {
-		return // only AniList-backed records carry full cast info
+		// Bangumi-added record: resolve via Xinyuu (Chinese studios/CV/staff)
+		title, _ := rec.Data["title"].(string)
+		if title == "" || detailBusy {
+			return
+		}
+		detailBusy = true
+		detailLoading = id
+		go func() {
+			if xs, err := anime.XinyuuSearch(title); err == nil && len(xs) > 0 && detailLoading == id {
+				aid := xs[0].AnimeID
+				for _, x := range xs {
+					if x.TitleChinese == title || x.TitleOriginal == title {
+						aid = x.AnimeID
+						break
+					}
+				}
+				stf, e1 := anime.XinyuuStaffGet(aid)
+				chs, e2 := anime.XinyuuCharactersGet(aid)
+				if (e1 == nil && len(stf) > 0) || (e2 == nil && len(chs) > 0) {
+					d := &anime.Detail{}
+					seen := map[int]bool{}
+					for _, s := range stf {
+						_ = s.RoleType // Xinyuu role_type is a job title; keep all and dedupe by name
+						if s.NameChinese == "" || seen[s.StaffID] {
+							continue
+						}
+						seen[s.StaffID] = true
+						d.Studios = append(d.Studios, anime.Studio{ID: s.StaffID, Name: s.NameChinese})
+					}
+					seenCh := map[int]bool{}
+					for _, ch := range chs {
+						if seenCh[ch.CharacterID] {
+							continue
+						}
+						seenCh[ch.CharacterID] = true
+						ce := anime.Character{ID: ch.CharacterID, Name: ch.NameChinese}
+						for _, va := range ch.VoiceActors {
+							ce.VAs = append(ce.VAs, anime.VA{Name: va})
+						}
+						d.Characters = append(d.Characters, ce)
+					}
+					detailInfo = d
+				}
+			}
+			detailBusy = false
+			pPostMessage.Call(hwndMain, uintptr(wmDetail), 0, 0)
+		}()
+		return
 	}
 	alID, _ := strconv.Atoi(v)
 	if alID == 0 || detailBusy {
