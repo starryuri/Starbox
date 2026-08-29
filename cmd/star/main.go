@@ -143,6 +143,7 @@ var (
 	pDestroyWindow      = user32.NewProc("DestroyWindow")
 	pRegisterClassEx    = user32.NewProc("RegisterClassExW")
 	pCreateFont         = gdi32.NewProc("CreateFontW")
+	pGetTextExtentPoint = gdi32.NewProc("GetTextExtentPoint32W")
 	pSendMessage        = user32.NewProc("SendMessageW")
 	pPostMessage        = user32.NewProc("PostMessageW")
 	pSetTimer           = user32.NewProc("SetTimer")
@@ -362,10 +363,9 @@ func drawBtn(di *drawItemStruct, fill, tc uintptr) {
 	}
 	pSetBkMode.Call(di.HDC, 1)
 	pSetTextColor.Call(di.HDC, tc)
-	tp, _ := windows.UTF16PtrFromString(getText(di.HwndItem))
-	rc := di.RcItem
-	// centered, single line, vcenter
-	pDrawText.Call(di.HDC, uintptr(unsafe.Pointer(tp)), uintptr(0xFFFFFFFF), uintptr(unsafe.Pointer(&rc)), 0x25)
+	label := getText(di.HwndItem)
+	bw2, bh2 := int(di.RcItem.Right-di.RcItem.Left), int(di.RcItem.Bottom-di.RcItem.Top)
+	drawTextRectFit(di.HDC, int(di.RcItem.Left), int(di.RcItem.Top), bw2, bh2, label, 24, false, tc, 0x0025)
 }
 
 func drawItem(diPtr uintptr) uintptr {

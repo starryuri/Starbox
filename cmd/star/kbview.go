@@ -532,7 +532,7 @@ func paintKBDetail(dc uintptr) {
 				meta += "    播出 " + air
 			}
 			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "信息", sec, &detHits)
-			drawTextRect(dc, ix, curY+40, cw-(ix-cx)-20, 30, meta, fontBody, colDim, dtSingle|dtVCenter|0x00008000)
+			drawTextRectFit(dc, ix, curY+40, cw-(ix-cx)-20, 30, meta, 23, false, colDim, dtSingle|dtVCenter)
 			curY += 84
 		case "studios":
 			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Studios) == 0 {
@@ -638,7 +638,7 @@ func paintKBDetail(dc uintptr) {
 		if lw2 > 340 {
 			lw2 = 340
 		}
-		drawTextRect(dc, ix, by-34, lw2, 34, "链接: "+link, fontTiny, colAcc, dtSingle|dtVCenter)
+		drawTextRectFit(dc, ix, by-34, lw2, 34, "链接: "+link, 18, false, colAcc, dtSingle|dtVCenter)
 		detHits = append(detHits, detHit{ix, by - 34, lw2, 34, "openlink", link})
 	}
 }

@@ -37,6 +37,44 @@ func clientSize() (int, int) {
 	return int(rc.Right - rc.Left), int(rc.Bottom - rc.Top)
 }
 
+// textWidth measures a string with the given font (in logical px).
+
+type sizeStruct struct {
+	Cx int32
+	Cy int32
+}
+
+
+func textWidth(dc uintptr, text string, font uintptr) int {
+	if font != 0 {
+		pSelectObject.Call(dc, font)
+	}
+	tp, _ := windows.UTF16PtrFromString(text)
+	n := 0
+	for _, c := range text {
+		_ = c
+		n++
+	}
+	var sz sizeStruct
+	pGetTextExtentPoint.Call(dc, uintptr(unsafe.Pointer(tp)), uintptr(n), uintptr(unsafe.Pointer(&sz)))
+	return int(sz.Cx)
+}
+
+// drawTextRectFit draws text at drawX/drawY inside the given rect; if the
+// text is wider than the rect at the requested font it retries with
+// progressively smaller fonts (down to 12px) so nothing is clipped.
+func drawTextRectFit(dc uintptr, x, y, w, h int, text string, size int, bold bool, rgb uintptr, flags uintptr) {
+	for s := size; s >= 12; s -= 2 {
+		f := createWin32Font(s, bold)
+		defer pDeleteObject.Call(f)
+		if textWidth(dc, text, f) <= w-8 {
+			drawTextRect(dc, x, y, w, h, text, f, rgb, flags)
+			return
+		}
+	}
+	drawTextRect(dc, x, y, w, h, text, createWin32Font(12, bold), rgb, flags|0x00008000)
+}
+
 func createWin32Font(size int, bold bool) uintptr {
 	w := uintptr(400)
 	if bold {
@@ -181,10 +219,10 @@ func fmtDuration(sec uint64) string {
 	h := (sec % 86400) / 3600
 	m := (sec % 3600) / 60
 	if d > 0 {
-		return fmt.Sprintf("%d 天 %d 小时", d, h)
+		return fmt.Sprintf("%d天%02d时", d, h)
 	}
 	if h > 0 {
-		return fmt.Sprintf("%d 小时 %d 分", h, m)
+		return fmt.Sprintf("%d:%02d时", h, m)
 	}
 	return fmt.Sprintf("%d 分钟", m)
 }
