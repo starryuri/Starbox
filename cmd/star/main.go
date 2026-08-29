@@ -238,6 +238,8 @@ var (
 	detailBusy    bool
 	detailLoading string // record id being enriched
 	detailInfo    *anime.Detail
+
+	detailScroll   int
 	searchBusy    bool
 	searchQuery   string
 	searchResults []anime.Result

@@ -509,10 +509,10 @@ func paintKBDetail(dc uintptr) {
 	my := sty + 64
 	// 简介 note (always right under the status chips)
 	if note != "" {
-		drawTextRect(dc, ix, my, iw, 93, note, fontBody, colFg, dtWordBreak|0x00008000)
+		drawTextRect(dc, ix, my-detailScroll, iw, 93, note, fontBody, colFg, dtWordBreak|0x00008000)
 	}
 	// sections render in user-configured order (↑/↓ arrows on each header)
-	curY := my + 120
+	curY := my + 120 - detailScroll
 	drawn := map[string]bool{}
 	for _, sec := range detailSections {
 		if drawn[sec] {

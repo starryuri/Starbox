@@ -148,20 +148,53 @@ func relayout() {
 	moveWin(hReffMine, contentX+150, 246, 140, 44)
 	moveWin(hHint, contentX+150, 248, contentW-150, 36)
 	moveWin(hInfo, contentX, 306, contentW, h-306-34)
-	moveWin(hAuto, contentX, 106, scale(240), 50)
-	moveWin(hSilent, contentX+scale(260), 106, scale(420), 50)
+	// settings page: fluid grid inside contentW (no fixed pixel offsets that
+	// can overflow a 1180px-min window and get clipped)
+	half := (contentW - scale(16)) / 2
+	if half < scale(300) {
+		half = scale(300)
+	}
+	moveWin(hAuto, contentX, 106, half, 50)
+	moveWin(hSilent, contentX+half+scale(16), 106, contentW-half-scale(16), 50)
 	moveWin(hAutoSave, contentX, 166, scale(150), 44)
-	moveWin(hThN, contentX, 222, scale(150), 44)
-	moveWin(hThS, contentX+scale(160), 222, scale(150), 44)
-	moveWin(hThD, contentX+scale(320), 222, scale(150), 44)
-	moveWin(hQuitE, contentX, 286, scale(300), 44)
-	moveWin(hQuitT, contentX+scale(320), 286, scale(560), 44)
-	moveWin(hProfLabel, contentX, 366, scale(900), 36)
-	moveWin(hProfPrev, contentX, 412, scale(130), 42)
-	moveWin(hProfNext, contentX+scale(140), 412, scale(130), 42)
-	moveWin(hProfName, contentX+scale(290), 414, scale(220), 40)
-	moveWin(hProfNew, contentX+scale(520), 412, scale(130), 42)
-	moveWin(hProfDel, contentX+scale(660), 412, scale(130), 42)
+	third := (contentW - 2*scale(12)) / 3
+	if third < scale(130) {
+		third = scale(130)
+	}
+	moveWin(hThN, contentX, 222, third, 44)
+	moveWin(hThS, contentX+third+scale(12), 222, third, 44)
+	moveWin(hThD, contentX+2*(third+scale(12)), 222, third, 44)
+	moveWin(hQuitE, contentX, 286, half, 44)
+	moveWin(hQuitT, contentX+half+scale(16), 286, contentW-half-scale(16), 44)
+	moveWin(hProfLabel, contentX, 366, contentW, 36)
+	qw := scale(130)
+	nw := scale(130)
+	ew := scale(220)
+	gap2 := scale(10)
+	used := 2*(qw+gap2) + ew + gap2 + nw + gap2
+	if used > contentW {
+		// narrow window: stack name row into two lines
+		moveWin(hProfPrev, contentX, 412, qw, 42)
+		moveWin(hProfNext, contentX+qw+gap2, 412, qw, 42)
+		nameW := contentW - 2*(qw+gap2)
+		if nameW < scale(120) {
+			nameW = scale(120)
+		}
+		moveWin(hProfName, contentX, 462, nameW, 40)
+		moveWin(hProfNew, contentX, 512, nw, 42)
+		moveWin(hProfDel, contentX+nw+gap2, 512, scale(130), 42)
+	} else {
+		nameW := contentW - used - nw - gap2 - scale(130)
+		if nameW < scale(120) {
+			nameW = scale(120)
+		}
+		moveWin(hProfPrev, contentX, 412, qw, 42)
+		moveWin(hProfNext, contentX+qw+gap2, 412, qw, 42)
+		moveWin(hProfName, contentX+2*(qw+gap2), 414, nameW, 40)
+		nx := contentX + 2*(qw+gap2) + nameW + gap2
+		moveWin(hProfNew, nx, 412, nw, 42)
+		moveWin(hProfDel, nx+nw+gap2, 412, scale(130), 42)
+	}
 	kbgap := 8
 	kbw := (contentW - 4*kbgap) / 5
 	if kbw < 110 {
@@ -175,8 +208,15 @@ func relayout() {
 		inputW = 220
 	}
 	moveWin(hKbToA, contentX, 182, inputW, 44)
-	moveWin(hKbAddBtn, contentX+inputW+10, 178, 150, 48)
-	moveWin(hKbSearchBtn, contentX+inputW+170, 178, 160, 48)
+	btn2x := contentX + inputW + 10
+	if btn2x+320 > contentX+contentW {
+		btn2x = contentX + contentW - 320
+	}
+	if btn2x < contentX+inputW+10 {
+		btn2x = contentX + inputW + 10
+	}
+	moveWin(hKbAddBtn, btn2x, 178, 150, 48)
+	moveWin(hKbSearchBtn, btn2x+160, 178, 160, 48)
 	kbScroll = 0
 	if kbCardMode() {
 		refreshKB()

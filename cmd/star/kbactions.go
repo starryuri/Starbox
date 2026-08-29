@@ -19,10 +19,12 @@ func onKBHit(action, id string) {
 	case "card":
 		detailID = id
 		detailInfo = nil
+		detailScroll = 0
 		pInvalidateRect.Call(hwndMain, 0, 1)
 		fetchDetailAsync(id)
 	case "back":
 		detailID = ""
+		detailScroll = 0
 		pInvalidateRect.Call(hwndMain, 0, 1)
 	case "delete":
 		kbDelete(id)

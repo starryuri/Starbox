@@ -275,6 +275,15 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
 		}
+		if kbCardMode() && detailID != "" {
+			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
+			detailScroll -= delta / 120 * 90
+			if detailScroll < 0 {
+				detailScroll = 0
+			}
+			pInvalidateRect.Call(hwndMain, 0, 1)
+			return 0
+		}
 		if listMode() {
 			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
 			listScroll -= delta / 120 * 90
