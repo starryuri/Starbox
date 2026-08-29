@@ -37,7 +37,7 @@ var uninsExe []byte
 const (
 	uninstallKey   = `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\STARBOX`
 	appKey         = `HKCU\Software\STARBOX`
-	appVersion     = "1.2.2"
+	appVersion     = "1.2.3"
 	createNoWindow = 0x08000000
 )
 
