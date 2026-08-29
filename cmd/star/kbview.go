@@ -549,13 +549,13 @@ func paintKBDetail(dc uintptr) {
 				if faved {
 					sc = colAcc
 				}
-				fillRectColor(dc, sx2, curY+40, 30, 30, sc)
-				drawTextRect(dc, sx2, curY+40, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
-				detHits = append(detHits, detHit{sx2, curY + 40, 30, 30, "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
-				drawTextRect(dc, sx2+scale(36), curY+scale(40), scale(210), scale(30), s.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
-				sx2 += 256
+				fillRectColor(dc, sx2, curY+scale(40), scale(30), scale(30), sc)
+				drawTextRect(dc, sx2, curY+scale(40), scale(30), scale(30), "★", fontNav, colOnAcc, dtCenter|dtVCenter)
+				detHits = append(detHits, detHit{sx2, curY + scale(40), scale(30), scale(30), "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
+				drawTextRect(dc, sx2+scale(40), curY+scale(40), scale(210), scale(30), s.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
+				sx2 += scale(256)
 			}
-			curY += 84
+			curY += scale(84)
 		case "cast":
 			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Characters) == 0 {
 				continue
@@ -576,15 +576,15 @@ func paintKBDetail(dc uintptr) {
 					if faved {
 						sc = colAcc
 					}
-					px := cxx + col*170
-					py := curY + 40 + row*34
-					fillRectColor(dc, px, py, 30, 30, sc)
-					drawTextRect(dc, px, py, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
-					detHits = append(detHits, detHit{px, py, 30, 30, "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
-					drawTextRect(dc, px+scale(36), py, scale(160), scale(30), va.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
+					px := cxx + col*scale(170)
+					py := curY + scale(40) + row*scale(34)
+					fillRectColor(dc, px, py, scale(30), scale(30), sc)
+					drawTextRect(dc, px, py, scale(30), scale(30), "★", fontNav, colOnAcc, dtCenter|dtVCenter)
+					detHits = append(detHits, detHit{px, py, scale(30), scale(30), "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
+					drawTextRect(dc, px+scale(40), py, scale(160), scale(30), va.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
 				}
 			}
-			curY += 84 + 3*34
+			curY += scale(84) + 3*scale(34)
 		case "staff":
 			// staff 表：制作人员来自同一详情的角色边（MAIN/SUPPORTING 之外的
 			// 制作公司成员在 Studios 一栏）；这里列出主要制作人员（角色+CV）
@@ -592,12 +592,18 @@ func paintKBDetail(dc uintptr) {
 				continue
 			}
 			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "制作人员 Staff", sec, &detHits)
-			staffY := curY + 40
+			staffY := curY + scale(40)
+			maxY := bottom - scale(120)
 			for _, s := range detailInfo.Studios {
+				if staffY > maxY {
+					more := len(detailInfo.Studios)
+					drawTextRect(dc, ix+scale(12), staffY, cw-(ix-cx)-24, scale(26), fmt.Sprintf("…等 %d 项", more), fontTiny, colDim, dtSingle)
+					break
+				}
 				drawTextRect(dc, ix+scale(12), staffY, cw-(ix-cx)-24, scale(26), "· 制作： "+s.Name, fontBody, colDim, dtSingle)
-				staffY += 30
+				staffY += scale(30)
 			}
-			curY = staffY + 44
+			curY = staffY + scale(24)
 		}
 	}
 	
@@ -771,11 +777,20 @@ func bgmCoverAsync(id, title string) {
 	}()
 }
 
-// fetchDetailAsync pulls studios/cast from AniList for the record being viewed.
+// fetchDetailAsync pulls studios/cast/staff for the record being viewed,
+// then persists them into the record so later opens are instant.
 func fetchDetailAsync(id string) {
 	rec := recByID(id)
 	if rec == nil {
 		return
+	}
+	// already enriched and cached in the record? show instantly, no network
+	if cached, ok := rec.Data["_detail"].(map[string]interface{}); ok && cached != nil {
+		if d := detailFromCache(cached); d != nil {
+			detailInfo = d
+			pInvalidateRect.Call(hwndMain, 0, 1)
+			return
+		}
 	}
 	v, _ := rec.Data["anilist_id"].(string)
 	if v == "" {
@@ -786,44 +801,18 @@ func fetchDetailAsync(id string) {
 		}
 		detailBusy = true
 		detailLoading = id
+		bgmID, _ := rec.Data["bgm_id"].(float64)
 		go func() {
-			if xs, err := anime.XinyuuSearch(title); err == nil && len(xs) > 0 && detailLoading == id {
-				aid := xs[0].AnimeID
-				for _, x := range xs {
-					if x.TitleChinese == title || x.TitleOriginal == title {
-						aid = x.AnimeID
-						break
-					}
-				}
-				stf, e1 := anime.XinyuuStaffGet(aid)
-				chs, e2 := anime.XinyuuCharactersGet(aid)
-				if (e1 == nil && len(stf) > 0) || (e2 == nil && len(chs) > 0) {
-					d := &anime.Detail{}
-					seen := map[int]bool{}
-					for _, s := range stf {
-						_ = s.RoleType // Xinyuu role_type is a job title; keep all and dedupe by name
-						if s.NameChinese == "" || seen[s.StaffID] {
-							continue
-						}
-						seen[s.StaffID] = true
-						d.Studios = append(d.Studios, anime.Studio{ID: s.StaffID, Name: s.NameChinese})
-					}
-					seenCh := map[int]bool{}
-					for _, ch := range chs {
-						if seenCh[ch.CharacterID] {
-							continue
-						}
-						seenCh[ch.CharacterID] = true
-						ce := anime.Character{ID: ch.CharacterID, Name: ch.NameChinese}
-						for _, va := range ch.VoiceActors {
-							ce.VAs = append(ce.VAs, anime.VA{Name: va})
-						}
-						d.Characters = append(d.Characters, ce)
-					}
-					detailInfo = d
-				}
+			d := enrichViaXinyuu(title)
+			if d == nil {
+				d = enrichViaBangumi(int(bgmID))
+			}
+			if d != nil && detailLoading == id {
+				detailInfo = d
+				persistDetail(id, d)
 			}
 			detailBusy = false
+			detailLoading = ""
 			pPostMessage.Call(hwndMain, uintptr(wmDetail), 0, 0)
 		}()
 		return
@@ -838,10 +827,204 @@ func fetchDetailAsync(id string) {
 		d, err := anime.GetDetail(alID)
 		if err == nil && detailLoading == id {
 			detailInfo = &d
+			persistDetail(id, &d)
 		}
 		detailBusy = false
+		detailLoading = ""
 		pPostMessage.Call(hwndMain, uintptr(wmDetail), 0, 0)
 	}()
+}
+
+// xyTitleMatch picks the best Xinyuu hit for a title.
+// exact match > full containment > shared first-two-words prefix.
+func xyTitleMatch(title string, xs []anime.XinyuuAnime) (anime.XinyuuAnime, bool) {
+	for _, x := range xs {
+		if x.TitleChinese == title || x.TitleOriginal == title {
+			return x, true
+		}
+	}
+	words := splitTitleWords(title)
+	for _, x := range xs {
+		if len(words) > 0 && strings.Contains(x.TitleChinese, title) || title != "" && strings.Contains(title, x.TitleChinese) && len([]rune(x.TitleChinese)) >= 4 {
+			return x, true
+		}
+	}
+	for _, x := range xs {
+		if prefixWords(x.TitleChinese, words, 2) {
+			return x, true
+		}
+	}
+	return anime.XinyuuAnime{}, false
+}
+
+// splitTitleWords breaks a title into space/separator words.
+func splitTitleWords(title string) []string {
+	f := strings.FieldsFunc(title, func(r rune) bool {
+		return r == ' ' || r == '　' || r == '·' || r == '！' || r == '!'
+	})
+	return f
+}
+
+// prefixWords reports whether the first n words of title match s.
+func prefixWords(s string, words []string, n int) bool {
+	if len(words) < n {
+		return false
+	}
+	need := strings.Join(words[:n], " ")
+	return strings.HasPrefix(s, need)
+}
+
+// enrichViaXinyuu resolves studios/cast via XinyuuDB; nil when not found.
+func enrichViaXinyuu(title string) *anime.Detail {
+	xs, err := anime.XinyuuSearch(title)
+	if err != nil || len(xs) == 0 {
+		return nil
+	}
+	pick, ok := xyTitleMatch(title, xs)
+	if !ok {
+		return nil
+	}
+	aid := pick.AnimeID
+	stf, e1 := anime.XinyuuStaffGet(aid)
+	chs, e2 := anime.XinyuuCharactersGet(aid)
+	if (e1 != nil || len(stf) == 0) && (e2 != nil || len(chs) == 0) {
+		return nil
+	}
+	return buildDetail(stf, chs)
+}
+
+// enrichViaBangumi falls back to Bangumi persons/characters via bgm id.
+func enrichViaBangumi(bgmID int) *anime.Detail {
+	if bgmID <= 0 {
+		return nil
+	}
+	d := &anime.Detail{}
+	if persons, err := anime.BangumiSubjectPersons(bgmID); err == nil {
+		for _, p := range persons {
+			if p.Relation == "动画制作" {
+				d.Studios = append(d.Studios, anime.Studio{ID: p.ID, Name: p.Name})
+			}
+		}
+	}
+	if chs, err := anime.BangumiCharactersGet(bgmID); err == nil {
+		for _, ch := range chs {
+			ce := anime.Character{ID: ch.ID, Name: ch.Name}
+			for _, a := range ch.Actors {
+				ce.VAs = append(ce.VAs, anime.VA{Name: a.Name})
+			}
+			d.Characters = append(d.Characters, ce)
+			}
+	}
+	if len(d.Studios) == 0 && len(d.Characters) == 0 {
+		return nil
+	}
+	return d
+}
+
+// buildDetail converts Xinyuu staff/characters into a Detail.
+func buildDetail(stf []anime.XinyuuStaff, chs []anime.XinyuuCharacter) *anime.Detail {
+	d := &anime.Detail{}
+	seen := map[int]bool{}
+	for _, s := range stf {
+		if s.NameChinese == "" || seen[s.StaffID] {
+			continue
+		}
+		seen[s.StaffID] = true
+		d.Studios = append(d.Studios, anime.Studio{ID: s.StaffID, Name: s.NameChinese})
+	}
+	seenCh := map[int]bool{}
+	for _, ch := range chs {
+		if seenCh[ch.CharacterID] {
+			continue
+		}
+		seenCh[ch.CharacterID] = true
+		ce := anime.Character{ID: ch.CharacterID, Name: ch.NameChinese}
+		for _, va := range ch.VoiceActors {
+			ce.VAs = append(ce.VAs, anime.VA{Name: va})
+		}
+		d.Characters = append(d.Characters, ce)
+	}
+	return d
+}
+
+// persistDetail caches the enriched detail into the record (key "_detail").
+func persistDetail(id string, d *anime.Detail) {
+	rec := recByID(id)
+	if rec == nil || d == nil {
+		return
+	}
+	if len(d.Studios) == 0 && len(d.Characters) == 0 {
+		return
+	}
+	data := rec.Data
+	cached := map[string]interface{}{}
+	stArr := make([]map[string]interface{}, 0, len(d.Studios))
+	for _, s := range d.Studios {
+		stArr = append(stArr, map[string]interface{}{"id": s.ID, "name": s.Name})
+	}
+	chArr := make([]map[string]interface{}, 0, len(d.Characters))
+	for _, c := range d.Characters {
+		vas := make([]map[string]interface{}, 0, len(c.VAs))
+		for _, va := range c.VAs {
+			vas = append(vas, map[string]interface{}{"id": va.ID, "name": va.Name})
+		}
+		chArr = append(chArr, map[string]interface{}{"id": c.ID, "name": c.Name, "vas": vas})
+	}
+	cached["studios"] = stArr
+	cached["characters"] = chArr
+	data["_detail"] = cached
+	if _, err := st.Update("anime", id, data); err != nil {
+		_ = err
+	}
+}
+
+// detailFromCache rebuilds a Detail from the cached record field.
+func detailFromCache(cached map[string]interface{}) *anime.Detail {
+	d := &anime.Detail{}
+	if stArr, ok := cached["studios"].([]interface{}); ok {
+		for _, raw := range stArr {
+			m, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := m["name"].(string)
+			idf, _ := m["id"].(float64)
+			if name != "" {
+				d.Studios = append(d.Studios, anime.Studio{ID: int(idf), Name: name})
+			}
+		}
+	}
+	if chArr, ok := cached["characters"].([]interface{}); ok {
+		for _, raw := range chArr {
+			m, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := m["name"].(string)
+			idf, _ := m["id"].(float64)
+			ce := anime.Character{ID: int(idf), Name: name}
+			if vas, ok := m["vas"].([]interface{}); ok {
+				for _, vraw := range vas {
+					vm, ok := vraw.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					vn, _ := vm["name"].(string)
+					vid, _ := vm["id"].(float64)
+					if vn != "" {
+						ce.VAs = append(ce.VAs, anime.VA{ID: int(vid), Name: vn})
+					}
+				}
+			}
+			if ce.Name != "" {
+				d.Characters = append(d.Characters, ce)
+			}
+		}
+	}
+	if len(d.Studios) == 0 && len(d.Characters) == 0 {
+		return nil
+	}
+	return d
 }
 
 // favExists reports whether this studio/cv is already favorited.
