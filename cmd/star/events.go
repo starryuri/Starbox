@@ -427,7 +427,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		}
 	case 0x0005: // WM_SIZE
 		// enforce a sane minimum so fixed-width controls never clip
-		minW, minH := 1180, 700
+		minW, minH := scale(1180), scale(700)
 		wCur := int(int16(uint16(lParam & 0xFFFF)))
 		hCur := int(int16(uint16((lParam >> 16) & 0xFFFF)))
 		if wParam == 0 && (wCur < minW || hCur < minH) { // SIZE_RESTORED

@@ -413,10 +413,10 @@ func paintKBCards(dc uintptr) {
 		}
 		ty := c.y + coverH
 		// DT_END_ELLIPSIS (0x00008000): "长标题…" instead of mid-glyph cut
-		drawTextRect(dc, c.x+6, ty+4, c.w-12, 44, c.title, fontCard, colFg, dtSingle|0x00008000)
+		drawTextRect(dc, c.x+6, ty+scale(4), c.w-12, scale(30), c.title, fontBody, colFg, dtSingle|0x00008000)
 		sc := statusColor(c.status)
-		fillRectColor(dc, c.x+6, ty+52, c.w-12, 30, sc)
-		drawTextRect(dc, c.x+6, ty+52, c.w-12, 30, c.status, fontTiny, colOnAcc, dtSingle|dtVCenter)
+		fillRectColor(dc, c.x+6, ty+scale(40), c.w-12, scale(26), sc)
+		drawTextRect(dc, c.x+6, ty+scale(40), c.w-12, scale(26), c.status, fontTiny, colOnAcc, dtSingle|dtVCenter)
 	}
 }
 
@@ -474,9 +474,9 @@ func paintKBDetail(dc uintptr) {
 	watched, _ := data["watched"].(string)
 	note, _ := data["note"].(string)
 
-	pad := 20
-	lw := 220
-	lh := 340
+	pad := scale(20)
+	lw := scale(220)
+	lh := scale(340)
 	if ci := getCover(r.ID); ci != nil && ci.loaded {
 		drawStretch(dc, cx+pad, top+pad, lw, lh, ci)
 	} else {
@@ -488,12 +488,12 @@ func paintKBDetail(dc uintptr) {
 	if iw < 140 {
 		iw = 140
 	}
-	drawTextRect(dc, ix, top+pad, iw, 60, title, fontTitle, colFg, dtSingle|0x00008000)
-	sty := top + pad + 84
-	drawTextRect(dc, ix, sty, 70, 38, "状态", fontNav, colDim, dtSingle|dtVCenter)
-	sx := ix + 78
+	drawTextRect(dc, ix, top+pad, iw, scale(44), title, fontCard, colFg, dtSingle|0x00008000)
+	sty := top + pad + scale(64)
+	drawTextRect(dc, ix, sty, scale(70), scale(38), "状态", fontNav, colDim, dtSingle|dtVCenter)
+	sx := ix + scale(78)
 	for _, s := range []string{"想追", "在看", "看过", "搁置"} {
-		w := 96
+		w := scale(96)
 		sel := s == status
 		sc := uintptr(colCard2)
 		tc := uintptr(colFg)
@@ -501,18 +501,18 @@ func paintKBDetail(dc uintptr) {
 			sc = colAcc
 			tc = colOnAcc
 		}
-		fillRectColor(dc, sx, sty, w, 38, sc)
-		drawTextRect(dc, sx, sty, w, 38, s, fontNav, tc, dtSingle|dtVCenter)
-		detHits = append(detHits, detHit{sx, sty, w, 38, "status", s})
-		sx += w + 10
+		fillRectColor(dc, sx, sty, w, scale(38), sc)
+		drawTextRect(dc, sx, sty, w, scale(38), s, fontNav, tc, dtSingle|dtVCenter)
+		detHits = append(detHits, detHit{sx, sty, w, scale(38), "status", s})
+		sx += w + scale(10)
 	}
-	my := sty + 64
+	my := sty + scale(64)
 	// 简介 note (always right under the status chips)
 	if note != "" {
 		drawTextRect(dc, ix, my-detailScroll, iw, 93, note, fontBody, colFg, dtWordBreak|0x00008000)
 	}
 	// sections render in user-configured order (↑/↓ arrows on each header)
-	curY := my + 120 - detailScroll
+	curY := my + scale(96) - detailScroll
 	drawn := map[string]bool{}
 	for _, sec := range detailSections {
 		if drawn[sec] {
@@ -532,7 +532,7 @@ func paintKBDetail(dc uintptr) {
 				meta += "    播出 " + air
 			}
 			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "信息", sec, &detHits)
-			drawTextRectFit(dc, ix, curY+40, cw-(ix-cx)-20, 30, meta, 23, false, colDim, dtSingle|dtVCenter)
+			drawTextRectFit(dc, ix, curY+scale(40), cw-(ix-cx)-20, scale(30), meta, scale(18), false, colDim, dtSingle|dtVCenter)
 			curY += 84
 		case "studios":
 			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Studios) == 0 {
@@ -552,7 +552,7 @@ func paintKBDetail(dc uintptr) {
 				fillRectColor(dc, sx2, curY+40, 30, 30, sc)
 				drawTextRect(dc, sx2, curY+40, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
 				detHits = append(detHits, detHit{sx2, curY + 40, 30, 30, "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
-				drawTextRect(dc, sx2+36, curY+40, 210, 30, s.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
+				drawTextRect(dc, sx2+scale(36), curY+scale(40), scale(210), scale(30), s.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
 				sx2 += 256
 			}
 			curY += 84
@@ -581,7 +581,7 @@ func paintKBDetail(dc uintptr) {
 					fillRectColor(dc, px, py, 30, 30, sc)
 					drawTextRect(dc, px, py, 30, 30, "★", fontNav, colOnAcc, dtCenter|dtVCenter)
 					detHits = append(detHits, detHit{px, py, 30, 30, "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
-					drawTextRect(dc, px+36, py, 160, 30, va.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
+					drawTextRect(dc, px+scale(36), py, scale(160), scale(30), va.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
 				}
 			}
 			curY += 84 + 3*34
@@ -594,7 +594,7 @@ func paintKBDetail(dc uintptr) {
 			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "制作人员 Staff", sec, &detHits)
 			staffY := curY + 40
 			for _, s := range detailInfo.Studios {
-				drawTextRect(dc, ix+12, staffY, cw-(ix-cx)-24, 26, "· 制作： "+s.Name, fontBody, colDim, dtSingle)
+				drawTextRect(dc, ix+scale(12), staffY, cw-(ix-cx)-24, scale(26), "· 制作： "+s.Name, fontBody, colDim, dtSingle)
 				staffY += 30
 			}
 			curY = staffY + 44

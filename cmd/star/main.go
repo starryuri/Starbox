@@ -487,12 +487,13 @@ func main() {
 		if initH > wh {
 			initH = wh
 		}
-		if initW < 1180 {
-			initW = 1180
-		}
-		if initH < 700 {
-			initH = 700
-		}
+			minW2, minH2 := scale(1180), scale(700)
+			if initW < minW2 {
+				initW = minW2
+			}
+			if initH < minH2 {
+				initH = minH2
+			}
 	}
 	hwndMain, _, _ = pCreateWindowEx.Call(0,
 		uintptr(unsafe.Pointer(clsName)),
@@ -506,6 +507,7 @@ func main() {
 	if r, _, _ := pGetDpiForWindow.Call(hwndMain); r != 0 {
 		dpiScale = int(r) * 100 / 96
 	}
+	computeUiScale()
 	pSetTimer.Call(hwndMain, 1, 5000, 0) // overview auto-refresh (WM_TIMER id 1)
 
 	fontTitle = createWin32Font(38, true)

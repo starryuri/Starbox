@@ -27,12 +27,50 @@ func moveWin(h uintptr, x, y, w, hh int) {
 	pMoveWindow.Call(h, uintptr(x), uintptr(y), uintptr(w), uintptr(hh), 1)
 }
 
-// scale adjusts a logical pixel value for the current monitor DPI.
+// uiScale is the effective UI density (100 = base design). It starts at the
+// monitor DPI scale but is capped so the minimum window (1180x700 logical)
+// still fits the real desktop work area; that keeps fonts, spacing and
+// layout shrinking together on small hi-DPI screens.
+var uiScale int = 100
+
+func computeUiScale() {
+	uiScale = dpiScale
+	if uiScale <= 100 || uiScale > 500 {
+		uiScale = 100
+		return
+	}
+	var wa rect
+	user32.NewProc("SystemParametersInfoW").Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
+	if wa.Right <= 0 || wa.Bottom <= 0 {
+		return
+	}
+	// design min window at 100% density is 1180x700
+	ww, wh := int(wa.Right)-int(wa.Left), int(wa.Bottom)-int(wa.Top)
+	fitW := ww * 100 / 1180
+	fitH := wh * 100 / 700
+	fit := fitW
+	if fitH < fit {
+		fit = fitH
+	}
+	if fit < 100 {
+		fit = 100
+	}
+	if uiScale > fit {
+		uiScale = fit
+	}
+	// density cap: never magnify for DPI - the layout is adaptive and at 200%
+	// the user saw giant fonts + clipped info.
+	if uiScale > 100 {
+		uiScale = 100
+	}
+}
+
+// scale adjusts a logical pixel value for the effective UI density.
 func scale(n int) int {
-	if dpiScale <= 100 || dpiScale > 500 {
+	if uiScale <= 100 || uiScale > 500 {
 		return n
 	}
-	return n * dpiScale / 100
+	return n * uiScale / 100
 }
 
 var fontsScaled int = 100
@@ -40,7 +78,7 @@ var fontsScaled int = 100
 // ensureFonts rebuilds all fonts when the DPI scale changed (avoids GDI
 // churn on every resize) and pushes them onto every control.
 func ensureFonts() {
-	if fontsScaled == dpiScale {
+	if fontsScaled == uiScale {
 		return
 	}
 	if fontsScaled != 100 {
@@ -55,7 +93,7 @@ func ensureFonts() {
 	fontCard = createWin32Font(scale(28), false)
 	fontBody = createWin32Font(scale(23), false)
 	fontTiny = createWin32Font(scale(18), false)
-	fontsScaled = dpiScale
+	fontsScaled = uiScale
 	setFont := func(h, fnt uintptr) {
 		if h != 0 {
 			pSendMessage.Call(h, 0x0030, fnt, 1)
