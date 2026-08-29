@@ -470,11 +470,35 @@ func main() {
 	}
 	pRegisterClassEx.Call(uintptr(unsafe.Pointer(&wc)))
 
+	// initial size fits the actual desktop: never bigger than the work area,
+	// never smaller than the minimum layout (1180x700). On small/hi-DPI
+	// screens this prevents the window from hanging off-screen.
+	initW, initH := 1720, 1060
+	if rc := user32.NewProc("GetSystemMetrics"); true {
+		_ = rc
+	}
+	var wa rect
+	user32.NewProc("SystemParametersInfoW").Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0) // SPI_GETWORKAREA
+	if wa.Right > 0 && wa.Bottom > 0 {
+		ww, wh := int(wa.Right)-int(wa.Left), int(wa.Bottom)-int(wa.Top)
+		if initW > ww {
+			initW = ww
+		}
+		if initH > wh {
+			initH = wh
+		}
+		if initW < 1180 {
+			initW = 1180
+		}
+		if initH < 700 {
+			initH = 700
+		}
+	}
 	hwndMain, _, _ = pCreateWindowEx.Call(0,
 		uintptr(unsafe.Pointer(clsName)),
 		uintptr(unsafe.Pointer(utf16("星匣 STARBOX"))),
 		uintptr(wsOverlappedWindow),
-		0x80000000, 0x80000000, 1720, 1060,
+		0x80000000, 0x80000000, uintptr(initW), uintptr(initH),
 		0, 0, hInst, 0)
 	enableDarkTitleBar(hwndMain)
 	curHand, _, _ = pLoadCursor.Call(0, 32649)  // IDC_HAND
