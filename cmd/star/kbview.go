@@ -483,13 +483,13 @@ func paintKBDetail(dc uintptr) {
 		fillRectColor(dc, cx+pad, top+pad, lw, lh, colCard2)
 		drawTextRect(dc, cx+pad, top+pad, lw, lh, title, fontCard, colDim, dtCenter|dtVCenter)
 	}
-	ix := cx + pad + lw + 24
-	iw := cw - pad - lw - 24 - pad
-	if iw < 140 {
-		iw = 140
+	ix := cx + pad + lw + scale(24)
+	iw := cw - pad - lw - scale(24) - pad
+	if iw < scale(140) {
+		iw = scale(140)
 	}
-	drawTextRect(dc, ix, top+pad, iw, scale(44), title, fontCard, colFg, dtSingle|0x00008000)
-	sty := top + pad + scale(64)
+	drawTextRect(dc, ix, top+pad, iw, scale(48), title, fontTitle, colFg, dtSingle|0x00008000)
+	sty := top + pad + scale(60)
 	drawTextRect(dc, ix, sty, scale(70), scale(38), "状态", fontNav, colDim, dtSingle|dtVCenter)
 	sx := ix + scale(78)
 	for _, s := range []string{"想追", "在看", "看过", "搁置"} {
@@ -506,13 +506,19 @@ func paintKBDetail(dc uintptr) {
 		detHits = append(detHits, detHit{sx, sty, w, scale(38), "status", s})
 		sx += w + scale(10)
 	}
-	my := sty + scale(64)
-	// 简介 note (always right under the status chips)
+	my := sty + scale(50)
+	secW := cw - (ix - cx) - scale(20)
+	// content flows from here; buttons live at the bottom; link drawn in flow
+	btnTop := bottom - scale(76)
+	contentTop := my - detailScroll
+	curY := contentTop
 	if note != "" {
-		drawTextRect(dc, ix, my-detailScroll, iw, 93, note, fontBody, colFg, dtWordBreak|0x00008000)
+		drawTextRect(dc, ix, contentTop, iw, scale(66), note, fontBody, colFg, dtWordBreak)
+		curY += scale(62) + scale(10)
+	} else {
+		curY = contentTop + scale(8)
 	}
-	// sections render in user-configured order (↑/↓ arrows on each header)
-	curY := my + scale(96) - detailScroll
+	linkText, _ := data["link"].(string)
 	drawn := map[string]bool{}
 	for _, sec := range detailSections {
 		if drawn[sec] {
@@ -531,17 +537,17 @@ func paintKBDetail(dc uintptr) {
 			if air, _ := data["air_start"].(string); air != "" {
 				meta += "    播出 " + air
 			}
-			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "信息", sec, &detHits)
-			drawTextRectFit(dc, ix, curY+scale(40), cw-(ix-cx)-20, scale(30), meta, scale(18), false, colDim, dtSingle|dtVCenter)
-			curY += 84
+			drawSectionHeader(dc, ix, curY, secW, "信息", sec, &detHits)
+			drawTextRectFit(dc, ix, curY+scale(40), secW, scale(34), meta, scale(19), false, colDim, dtSingle|dtVCenter)
+			curY += scale(80)
 		case "studios":
 			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Studios) == 0 {
 				continue
 			}
-			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "制作公司", sec, &detHits)
-			sx2 := ix + 12
+			drawSectionHeader(dc, ix, curY, secW, "制作公司", sec, &detHits)
+			sy := curY + scale(42)
 			for _, s := range detailInfo.Studios {
-				if sx2 > cx+cw-120 {
+				if sy+scale(40) > btnTop {
 					break
 				}
 				faved := favExists(s.Name)
@@ -549,68 +555,109 @@ func paintKBDetail(dc uintptr) {
 				if faved {
 					sc = colAcc
 				}
-				fillRectColor(dc, sx2, curY+scale(40), scale(30), scale(30), sc)
-				drawTextRect(dc, sx2, curY+scale(40), scale(30), scale(30), "★", fontNav, colOnAcc, dtCenter|dtVCenter)
-				detHits = append(detHits, detHit{sx2, curY + scale(40), scale(30), scale(30), "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
-				drawTextRect(dc, sx2+scale(40), curY+scale(40), scale(210), scale(30), s.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
-				sx2 += scale(256)
+				fillRectColor(dc, ix+scale(8), sy, scale(32), scale(32), sc)
+				drawTextRect(dc, ix+scale(8), sy, scale(32), scale(32), "★", fontBody, colOnAcc, dtCenter|dtVCenter)
+				nameW := scale(280)
+				drawTextRect(dc, ix+scale(52), sy, nameW, scale(34), s.Name, fontCard, colFg, dtSingle|dtVCenter|0x00008000)
+				// whole row (star + name) toggles favourite
+				detHits = append(detHits, detHit{ix + scale(8), sy, scale(52) + nameW, scale(34), "dettoggle", "studio|" + s.Name + "|" + strconv.Itoa(s.ID)})
+				sy += scale(40)
 			}
-			curY += scale(84)
+			curY = sy + scale(14)
 		case "cast":
 			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Characters) == 0 {
 				continue
 			}
-			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "声优 CV", sec, &detHits)
+			drawSectionHeader(dc, ix, curY, secW, "声优 CV", sec, &detHits)
+			colW := scale(300)
+			nCols := int(iw-scale(12)) / colW
+			if nCols < 1 {
+				nCols = 1
+			}
+			rowH := scale(40)
+			slots := 9
 			shown := 0
-			for row := 0; row < 3 && shown < len(detailInfo.Characters); row++ {
-				cxx := ix + 12
-				for col := 0; col < 4 && shown < len(detailInfo.Characters); col++ {
-					ch := detailInfo.Characters[shown]
-					shown++
-					if len(ch.VAs) == 0 {
-						continue
-					}
-					va := ch.VAs[0]
-					faved := favExists(va.Name)
-					sc := uintptr(colCard2)
-					if faved {
-						sc = colAcc
-					}
-					px := cxx + col*scale(170)
-					py := curY + scale(40) + row*scale(34)
-					fillRectColor(dc, px, py, scale(30), scale(30), sc)
-					drawTextRect(dc, px, py, scale(30), scale(30), "★", fontNav, colOnAcc, dtCenter|dtVCenter)
-					detHits = append(detHits, detHit{px, py, scale(30), scale(30), "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
-					drawTextRect(dc, px+scale(40), py, scale(160), scale(30), va.Name, fontBody, colFg, dtSingle|dtVCenter|0x00008000)
-				}
-			}
-			curY += scale(84) + 3*scale(34)
-		case "staff":
-			// staff 表：制作人员来自同一详情的角色边（MAIN/SUPPORTING 之外的
-			// 制作公司成员在 Studios 一栏）；这里列出主要制作人员（角色+CV）
-			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Relations) == 0 && len(detailInfo.Studios) == 0 {
-				continue
-			}
-			drawSectionHeader(dc, ix, curY, cw-(ix-cx)-20, "制作人员 Staff", sec, &detHits)
-			staffY := curY + scale(40)
-			maxY := bottom - scale(120)
-			for _, s := range detailInfo.Studios {
-				if staffY > maxY {
-					more := len(detailInfo.Studios)
-					drawTextRect(dc, ix+scale(12), staffY, cw-(ix-cx)-24, scale(26), fmt.Sprintf("…等 %d 项", more), fontTiny, colDim, dtSingle)
+			for shown < len(detailInfo.Characters) && shown < slots {
+				ch := detailInfo.Characters[shown]
+				row, col := shown/nCols, shown%nCols
+				px := ix + scale(8) + col*colW
+				py := curY + scale(44) + row*rowH
+				if py+rowH > btnTop {
 					break
 				}
-				drawTextRect(dc, ix+scale(12), staffY, cw-(ix-cx)-24, scale(26), "· 制作： "+s.Name, fontBody, colDim, dtSingle)
-				staffY += scale(30)
+				shown++
+				if len(ch.VAs) == 0 {
+					continue
+				}
+				va := ch.VAs[0]
+				faved := favExists(va.Name)
+				sc := uintptr(colCard2)
+				if faved {
+					sc = colAcc
+				}
+				fillRectColor(dc, px, py, scale(34), scale(34), sc)
+				drawTextRect(dc, px, py, scale(34), scale(34), "★", fontBody, colOnAcc, dtCenter|dtVCenter)
+				nameW := colW - scale(52)
+				drawTextRect(dc, px+scale(44), py, nameW, scale(34), va.Name, fontCard, colFg, dtSingle|dtVCenter|0x00008000)
+				detHits = append(detHits, detHit{px, py, scale(44) + nameW, scale(34), "dettoggle", "cv|" + va.Name + "|" + strconv.Itoa(va.ID)})
 			}
-			curY = staffY + scale(24)
+			rowsUsed := (shown + nCols - 1) / nCols
+			curY = curY + scale(42) + rowsUsed*rowH + scale(14)
+		case "staff":
+			if detailInfo == nil || detailLoading == r.ID || len(detailInfo.Staff) == 0 {
+				continue
+			}
+			drawSectionHeader(dc, ix, curY, secW, "制作人员 Staff", sec, &detHits)
+			colW2 := int(secW-scale(12)) / 2
+			if colW2 < scale(220) {
+				colW2 = secW - scale(12)
+			}
+			rowH2 := scale(34)
+			maxRows := int(btnTop-(curY+scale(44))) / rowH2
+			if maxRows < 1 {
+				maxRows = 1
+			}
+			staffY := curY + scale(44)
+			shown := 0
+			for _, s := range detailInfo.Staff {
+				row, col := shown/2, shown%2
+				if row >= maxRows {
+					break
+				}
+				label := s.Role + "：" + s.Name
+				drawTextRectFit(dc, ix+scale(12)+col*colW2, staffY+row*rowH2, colW2-scale(16), scale(28), label, scale(20), false, colFg, dtSingle|dtVCenter)
+				shown++
+			}
+			rowsUsed2 := (shown + 1) / 2
+			staffY += rowsUsed2 * rowH2
+			if shown < len(detailInfo.Staff) {
+				if staffY > btnTop-scale(28) {
+					staffY = btnTop - scale(28)
+				}
+				drawTextRect(dc, ix+scale(12), staffY, secW-scale(12), scale(24), fmt.Sprintf("…等 %d 项", len(detailInfo.Staff)-shown), fontBody, colDim, dtSingle)
+				staffY += scale(28)
+			}
+			curY = staffY + scale(16)
 		}
 	}
-	
-	by := bottom - 76
-	bw := 150
-	bh := 56
-	// back
+	detailContentBottom = curY
+	// link (clickable) drawn in flow at the end of the content
+	if linkText != "" && curY+scale(40) < btnTop {
+		lw2 := iw
+		if lw2 > scale(360) {
+			lw2 = scale(360)
+		}
+		drawTextRectFit(dc, ix, curY, lw2, scale(34), "链接: "+linkText, scale(19), false, colAcc, dtSingle|dtVCenter)
+		detHits = append(detHits, detHit{ix, curY, lw2, scale(34), "openlink", linkText})
+	}
+	// clamp scroll so content never floats above the header
+	if contentTop > my {
+		detailScroll = 0
+	}
+	// bottom buttons
+	bw := scale(150)
+	bh := scale(52)
+	by := bottom - scale(76)
 	backFill := uintptr(colCard2)
 	if hoverAct == "back" {
 		backFill = colAcc
@@ -618,8 +665,7 @@ func paintKBDetail(dc uintptr) {
 	fillRectColor(dc, cx+pad, by, bw, bh, backFill)
 	drawTextRect(dc, cx+pad, by, bw, bh, "← 返回", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
 	detHits = append(detHits, detHit{cx + pad, by, bw, bh, "back", ""})
-	// watch +1
-	wx := cx + pad + bw + 12
+	wx := cx + pad + bw + scale(12)
 	watchFill := uintptr(colAcc)
 	watchTx := uintptr(colOnAcc)
 	if hoverAct == "watch" {
@@ -629,24 +675,14 @@ func paintKBDetail(dc uintptr) {
 	fillRectColor(dc, wx, by, bw, bh, watchFill)
 	drawTextRect(dc, wx, by, bw, bh, "▶ 看一集 +1", fontNav, watchTx, dtSingle|dtVCenter|dtCenter)
 	detHits = append(detHits, detHit{wx, by, bw, bh, "watch", r.ID})
-	// delete
 	dx := cx + cw - pad - bw
 	delFill := uintptr(colRed)
 	if hoverAct == "delete" {
-		delFill = 0x0000D0 // brighten on hover
+		delFill = 0x0000D0
 	}
 	fillRectColor(dc, dx, by, bw, bh, delFill)
 	drawTextRect(dc, dx, by, bw, bh, "删除", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
 	detHits = append(detHits, detHit{dx, by, bw, bh, "delete", r.ID})
-	if link, _ := data["link"].(string); link != "" {
-		// draw a real, clickable-looking link bar at the bottom of the info column
-		lw2 := iw
-		if lw2 > 340 {
-			lw2 = 340
-		}
-		drawTextRectFit(dc, ix, by-34, lw2, 34, "链接: "+link, 18, false, colAcc, dtSingle|dtVCenter)
-		detHits = append(detHits, detHit{ix, by - 34, lw2, 34, "openlink", link})
-	}
 }
 
 // --- KB mutations ---
@@ -784,12 +820,20 @@ func fetchDetailAsync(id string) {
 	if rec == nil {
 		return
 	}
-	// already enriched and cached in the record? show instantly, no network
+	// already enriched and cached in the record? show instantly, no network.
+	// Pre-staff-split caches parked staff rows inside studios; refetch when the
+	// studio list looks like a staff roster (more than 3 entries).
 	if cached, ok := rec.Data["_detail"].(map[string]interface{}); ok && cached != nil {
-		if d := detailFromCache(cached); d != nil {
-			detailInfo = d
-			pInvalidateRect.Call(hwndMain, 0, 1)
-			return
+		stale := false
+		if arr, ok := cached["studios"].([]interface{}); ok && len(arr) > 3 {
+			stale = true
+		}
+		if !stale {
+			if d := detailFromCache(cached); d != nil {
+				detailInfo = d
+				pInvalidateRect.Call(hwndMain, 0, 1)
+				return
+			}
 		}
 	}
 	v, _ := rec.Data["anilist_id"].(string)
@@ -894,6 +938,7 @@ func enrichViaXinyuu(title string) *anime.Detail {
 }
 
 // enrichViaBangumi falls back to Bangumi persons/characters via bgm id.
+// Chinese data: 动画制作 → Studios, every other credited person → Staff.
 func enrichViaBangumi(bgmID int) *anime.Detail {
 	if bgmID <= 0 {
 		return nil
@@ -903,6 +948,8 @@ func enrichViaBangumi(bgmID int) *anime.Detail {
 		for _, p := range persons {
 			if p.Relation == "动画制作" {
 				d.Studios = append(d.Studios, anime.Studio{ID: p.ID, Name: p.Name})
+			} else if p.Relation != "配音" {
+				d.Staff = append(d.Staff, anime.StaffMember{ID: p.ID, Name: p.Name, Role: p.Relation})
 			}
 		}
 	}
@@ -913,7 +960,7 @@ func enrichViaBangumi(bgmID int) *anime.Detail {
 				ce.VAs = append(ce.VAs, anime.VA{Name: a.Name})
 			}
 			d.Characters = append(d.Characters, ce)
-			}
+		}
 	}
 	if len(d.Studios) == 0 && len(d.Characters) == 0 {
 		return nil
@@ -922,15 +969,21 @@ func enrichViaBangumi(bgmID int) *anime.Detail {
 }
 
 // buildDetail converts Xinyuu staff/characters into a Detail.
+// Xinyuu credits studios as staff entries with role 动画制作; everything else
+// (导演/系列构成/人设/音乐…) becomes the Staff section, all in Chinese.
 func buildDetail(stf []anime.XinyuuStaff, chs []anime.XinyuuCharacter) *anime.Detail {
 	d := &anime.Detail{}
-	seen := map[int]bool{}
+	seen := map[string]bool{}
 	for _, s := range stf {
-		if s.NameChinese == "" || seen[s.StaffID] {
+		if s.NameChinese == "" || seen[strconv.Itoa(s.StaffID)+s.RoleType] {
 			continue
 		}
-		seen[s.StaffID] = true
-		d.Studios = append(d.Studios, anime.Studio{ID: s.StaffID, Name: s.NameChinese})
+		seen[strconv.Itoa(s.StaffID)+s.RoleType] = true
+		if s.RoleType == "动画制作" {
+			d.Studios = append(d.Studios, anime.Studio{ID: s.StaffID, Name: s.NameChinese})
+		} else {
+			d.Staff = append(d.Staff, anime.StaffMember{ID: s.StaffID, Name: s.NameChinese, Role: s.RoleType})
+		}
 	}
 	seenCh := map[int]bool{}
 	for _, ch := range chs {
@@ -953,7 +1006,7 @@ func persistDetail(id string, d *anime.Detail) {
 	if rec == nil || d == nil {
 		return
 	}
-	if len(d.Studios) == 0 && len(d.Characters) == 0 {
+	if len(d.Studios) == 0 && len(d.Characters) == 0 && len(d.Staff) == 0 {
 		return
 	}
 	data := rec.Data
@@ -961,6 +1014,10 @@ func persistDetail(id string, d *anime.Detail) {
 	stArr := make([]map[string]interface{}, 0, len(d.Studios))
 	for _, s := range d.Studios {
 		stArr = append(stArr, map[string]interface{}{"id": s.ID, "name": s.Name})
+	}
+	sfArr := make([]map[string]interface{}, 0, len(d.Staff))
+	for _, s := range d.Staff {
+		sfArr = append(sfArr, map[string]interface{}{"id": s.ID, "name": s.Name, "role": s.Role})
 	}
 	chArr := make([]map[string]interface{}, 0, len(d.Characters))
 	for _, c := range d.Characters {
@@ -971,6 +1028,7 @@ func persistDetail(id string, d *anime.Detail) {
 		chArr = append(chArr, map[string]interface{}{"id": c.ID, "name": c.Name, "vas": vas})
 	}
 	cached["studios"] = stArr
+	cached["staff"] = sfArr
 	cached["characters"] = chArr
 	data["_detail"] = cached
 	if _, err := st.Update("anime", id, data); err != nil {
@@ -991,6 +1049,20 @@ func detailFromCache(cached map[string]interface{}) *anime.Detail {
 			idf, _ := m["id"].(float64)
 			if name != "" {
 				d.Studios = append(d.Studios, anime.Studio{ID: int(idf), Name: name})
+			}
+		}
+	}
+	if sfArr, ok := cached["staff"].([]interface{}); ok {
+		for _, raw := range sfArr {
+			m, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := m["name"].(string)
+			role, _ := m["role"].(string)
+			idf, _ := m["id"].(float64)
+			if name != "" {
+				d.Staff = append(d.Staff, anime.StaffMember{ID: int(idf), Name: name, Role: role})
 			}
 		}
 	}
@@ -1021,7 +1093,7 @@ func detailFromCache(cached map[string]interface{}) *anime.Detail {
 			}
 		}
 	}
-	if len(d.Studios) == 0 && len(d.Characters) == 0 {
+	if len(d.Studios) == 0 && len(d.Characters) == 0 && len(d.Staff) == 0 {
 		return nil
 	}
 	return d
@@ -1038,7 +1110,8 @@ func favExists(name string) bool {
 	return false
 }
 
-// favToggle adds or removes a studio/cast favorite; al id links back to works.
+// favToggle adds or removes a studio/cast favorite.
+// alID is the Bangumi person id (Chinese works) with anilist id as fallback.
 func favToggle(name, typ string, alID int) {
 	recs, _ := st.List("favs")
 	for _, r := range recs {
@@ -1050,6 +1123,7 @@ func favToggle(name, typ string, alID int) {
 	_, _ = st.Add("favs", map[string]interface{}{
 		"name":  name,
 		"type":  typ,
+		"bgm_id": float64(alID),
 		"al_id": float64(alID),
 	})
 }
@@ -1079,6 +1153,16 @@ func drawScrollIndicator(dc uintptr, contentH, viewH, scroll, x, w int) {
 func hitAt(x, y int) (string, string) {
 	if kbCardMode() {
 		if h := hitTestKB(x, y); h != "" {
+			p := strings.SplitN(h, "|", 2)
+			if len(p) == 2 {
+				return p[0], p[1]
+			}
+			return p[0], ""
+		}
+		return "", ""
+	}
+	if page == "favs" && favDetailID != "" {
+		if h := hitTestList(x, y); h != "" {
 			p := strings.SplitN(h, "|", 2)
 			if len(p) == 2 {
 				return p[0], p[1]

@@ -238,7 +238,13 @@ func onListHit(action, id string) {
 		return
 	case "favback":
 		favDetailID = ""
+		favScroll = 0
 		pInvalidateRect.Call(hwndMain, 0, 1)
+	case "favwork":
+		// id = bangumi subject id of the work; add-or-jump into KB detail
+		if n, err := strconv.Atoi(id); err == nil {
+			openFavWork(n)
+		}
 	case "favdel":
 		favDelete(id)
 	}
@@ -271,28 +277,68 @@ func loadFavWorks() {
 		favEntImage = fp
 	}
 	typ := favEntType
+	bgmID := favBgmID(rec)
 	alID := favAlID(rec)
+	name := favEntName
 	go func() {
-		id := alID
-		if typ == "cv" || typ == "staff" {
-			if w, err := anime.GetStaff(id); err == nil {
-				favEntImage = w.Image
-				favWorks = w.Media
+		if bgmID > 0 {
+			// Chinese-first: Bangumi person subjects (Chinese titles + covers)
+			if subs, err := anime.BangumiPersonSubjects(bgmID); err == nil && len(subs) > 0 {
+				for _, s := range subs {
+					favWorks = append(favWorks, anime.Media{ID: s.ID, Title: s.NameCN, Cover: s.Image, CN: s.NameCN, BgmID: s.ID})
+				}
 			}
-		} else {
-			if w, err := anime.GetStudio(id); err == nil {
+		}
+		if len(favWorks) == 0 && name != "" {
+			// no stored id (Xinyuu-sourced favourites): resolve by name
+			if pid, _, e := anime.BangumiPersonSearch(name); e == nil && pid > 0 {
+				if subs, err := anime.BangumiPersonSubjects(pid); err == nil {
+					for _, s := range subs {
+						favWorks = append(favWorks, anime.Media{ID: s.ID, Title: s.NameCN, Cover: s.Image, CN: s.NameCN, BgmID: s.ID})
+					}
+				}
+			}
+		}
+		if len(favWorks) == 0 {
+			// fallback: AniList by anilist id
+			id := alID
+			if typ == "cv" || typ == "staff" {
+				if w, err := anime.GetStaff(id); err == nil {
+					favEntImage = w.Image
+					favWorks = w.Media
+				}
+			} else {
+				if w, err := anime.GetStudio(id); err == nil {
+					favEntImage = w.Image
+					favWorks = w.Media
+				}
+			}
+		} else if typ == "cv" || typ == "staff" {
+			// fetch person image for the header
+			if w, err := anime.GetStaff(bgmID); err == nil && w.Image != "" {
 				favEntImage = w.Image
-				favWorks = w.Media
 			}
 		}
 		for _, m := range favWorks {
 			if m.Cover != "" {
-				ensureCover("fvw"+strconv.Itoa(m.ID), m.Cover)
+				ensureCover("fvw" + strconv.Itoa(m.ID), m.Cover)
 			}
 		}
 		favBusy = false
+		_ = name
 		pPostMessage.Call(hwndMain, uintptr(wmFavWorks), 0, 0)
 	}()
+}
+
+// favBgmID reads the stored Bangumi person id from a fav record.
+func favBgmID(rec *kb.Record) int {
+	switch v := rec.Data["bgm_id"].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
 }
 
 func favDelete(id string) {
@@ -309,46 +355,60 @@ func paintFavWorks(dc uintptr) {
 	cx, cw, top, bottom := kbGeom()
 	fillRectColor(dc, cx, top, cw, bottom-top, colSide)
 	listHits = nil
-	bw, bh := 110, 44
-	fillRectColor(dc, cx+16, top+16, bw, bh, colCard2)
-	drawTextRect(dc, cx+16, top+16, bw, bh, "← 返回", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
-	listHits = append(listHits, detHit{cx + 16, top + 16, bw, bh, "favback", ""})
-	dw := 110
-	dx := cx + cw - 16 - dw
-	fillRectColor(dc, dx, top+16, dw, bh, colRed)
-	drawTextRect(dc, dx, top+16, dw, bh, "删除", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
-	listHits = append(listHits, detHit{dx, top + 16, dw, bh, "favdel", favDetailID})
-	drawTextRect(dc, cx+16+bw+12, top+16, cw-bw-dw-12-32, bh, favEntName, fontTitle, colFg, dtSingle|dtVCenter)
-	gy := top + 76
-	drawTextRect(dc, cx+16, gy, cw-32, 30, "作品 ("+fmt.Sprintf("%d", len(favWorks))+")", fontNav, colDim, dtSingle)
-	gy += 40
+	bw, bh := scale(120), scale(46)
+	fillRectColor(dc, cx+scale(16), top+scale(16), bw, bh, colCard2)
+	drawTextRect(dc, cx+scale(16), top+scale(16), bw, bh, "← 返回", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
+	listHits = append(listHits, detHit{cx + scale(16), top + scale(16), bw, bh, "favback", ""})
+	dw := scale(120)
+	dx := cx + cw - scale(16) - dw
+	fillRectColor(dc, dx, top+scale(16), dw, bh, colRed)
+	drawTextRect(dc, dx, top+scale(16), dw, bh, "删除", fontNav, colFg, dtSingle|dtVCenter|dtCenter)
+	listHits = append(listHits, detHit{dx, top + scale(16), dw, bh, "favdel", favDetailID})
+	drawTextRect(dc, cx+scale(16)+bw+scale(12), top+scale(16), cw-bw-dw-scale(12)-scale(32), bh, favEntName, fontTitle, colFg, dtSingle|dtVCenter|0x00008000)
+	gy := top + scale(84)
+	drawTextRect(dc, cx+scale(16), gy, cw-scale(32), scale(32), "作品 ("+fmt.Sprintf("%d", len(favWorks))+")", fontNav, colDim, dtSingle)
+	gy += scale(44)
 	if favBusy {
-		drawTextRect(dc, cx+16, gy, cw-32, 40, "（正在获取作品…）", fontBody, colDim, dtLeft)
+		drawTextRect(dc, cx+scale(16), gy, cw-scale(32), scale(40), "（正在获取作品…）", fontBody, colDim, dtLeft)
 		return
 	}
 	if len(favWorks) == 0 {
-		drawTextRect(dc, cx+16, gy, cw-32, 40, "（暂无作品数据）", fontBody, colDim, dtLeft)
+		drawTextRect(dc, cx+scale(16), gy, cw-scale(32), scale(40), "（暂无作品数据）", fontBody, colDim, dtLeft)
 		return
 	}
-	const gap = 16
-	colW := 150
-	cols := (cw - 32 + gap) / (colW + gap)
+	const gap = 18
+	minW := 190
+	cols := (cw-scale(32)+gap)/(minW+gap)
 	if cols < 1 {
 		cols = 1
 	}
-	wW := (cw - 32 - (cols-1)*gap) / cols
-	if wW < 90 {
-		wW = 90
-	}
+	wW := (cw - scale(32) - (cols-1)*gap) / cols
 	coverH := wW * 14 / 10
-	cardH := coverH + 54
+	titleH := scale(56)
+	cardH := coverH + titleH
+	// scroll clamp
+	rows := (len(favWorks) + cols - 1) / cols
+	totalH := rows*(cardH+gap)
+	maxScroll := totalH - (bottom - gy)
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if favScroll > maxScroll {
+		favScroll = maxScroll
+	}
+	if favScroll < 0 {
+		favScroll = 0
+	}
 	for i, m := range favWorks {
 		col := i % cols
 		row := i / cols
-		x := cx + 16 + col*(wW+gap)
-		y := gy + row*(cardH+gap)
-		if y+cardH > bottom {
+		x := cx + scale(16) + col*(wW+gap)
+		y := gy + row*(cardH+gap) - favScroll
+		if y > bottom {
 			break
+		}
+		if y+cardH < gy-scale(200) {
+			continue
 		}
 		fillRectColor(dc, x, y, wW, cardH, colCard)
 		ci := getCover("fvw" + strconv.Itoa(m.ID))
@@ -356,9 +416,75 @@ func paintFavWorks(dc uintptr) {
 			drawStretch(dc, x, y, wW, coverH, ci)
 		} else {
 			fillRectColor(dc, x, y, wW, coverH, colCard2)
-			drawTextRect(dc, x, y+coverH/2-24, wW, 48, m.Title, fontTiny, colDim, dtCenter|dtVCenter)
+			drawTextRect(dc, x+scale(6), y+coverH/2-scale(20), wW-scale(12), scale(40), m.Title, fontBody, colDim, dtCenter|dtVCenter)
 		}
-		drawTextRect(dc, x+6, y+coverH+2, wW-12, 52, m.Title, fontTiny, colFg, dtWordBreak)
+		drawTextRect(dc, x+scale(6), y+coverH+scale(4), wW-scale(12), titleH-scale(8), m.Title, fontBody, colFg, dtWordBreak)
+		listHits = append(listHits, detHit{x, y, wW, cardH, "favwork", strconv.Itoa(m.ID)})
+	}
+	if totalH > bottom-gy {
+		drawScrollIndicator(dc, totalH, bottom-gy, favScroll, cx+cw-scale(10), 4)
 	}
 }
 
+
+// openFavWork jumps to a works-grid title: reuse an existing KB record with
+// the same bgm id, otherwise create one, then open the KB detail page.
+func openFavWork(subjectID int) {
+	// already in the library?
+	if recs, err := st.List("anime"); err == nil {
+		for _, r := range recs {
+			if bid, _ := r.Data["bgm_id"].(float64); bid > 0 && int(bid) == subjectID {
+				jumpToKBDetail(r.ID)
+				return
+			}
+		}
+	}
+	// fetch Chinese metadata and add
+	s, err := anime.BangumiGetDetail(subjectID)
+	if err != nil {
+		SetError("获取条目失败：%v", err)
+		return
+	}
+	title := s.NameCN
+	if title == "" {
+		title = s.Name
+	}
+	data := map[string]interface{}{
+		"title":   title,
+		"status": "想追",
+		"bgm_id":  float64(s.ID),
+		"cover":  s.Images.Large,
+		"link":   s.URL,
+		"air_start": s.Date,
+		"note":   s.Summary,
+	}
+	if s.Eps != nil && *s.Eps > 0 {
+		data["total"] = *s.Eps
+	}
+	if s.Rating.Score > 0 {
+		data["rate"] = s.Rating.Score
+	}
+	rec, err := st.Add("anime", data)
+	if err != nil {
+		SetError("添加失败：%v", err)
+		return
+	}
+	if rec.ID != "" && s.Images.Large != "" {
+		ensureCover(rec.ID, s.Images.Large)
+	}
+	SetStatus("已加入番剧库：%s", title)
+	jumpToKBDetail(rec.ID)
+}
+
+// jumpToKBDetail switches to the KB anime tab and opens a record detail.
+func jumpToKBDetail(id string) {
+	page = "kb"
+	kbCol = "anime"
+	kbScroll = 0
+	searchMode = false
+	favDetailID = ""
+	refreshKB()
+	highlightNav()
+	renderPage()
+	onKBHit("card", id)
+}

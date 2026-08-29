@@ -239,6 +239,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 				return 0
 			}
 		}
+		return 0
 	case 0x0200: // WM_MOUSEMOVE
 		x, y := mouseXY(lParam)
 		trackHover(hwnd)
@@ -254,8 +255,8 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		}
 		return 0
 	case 0x020A: // WM_MOUSEWHEEL
+		delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
 		if kbCardMode() && detailID == "" && !searchMode {
-			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
 			wheelAccum += delta
 			step := 0
 			for wheelAccum <= -120 {
@@ -276,16 +277,28 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			return 0
 		}
 		if kbCardMode() && detailID != "" {
-			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
 			detailScroll -= delta / 120 * 90
+			if detailContentBottom > 0 {
+				_, _, _, bot := kbGeom()
+				if max := detailContentBottom - (bot - scale(96)); max > 0 && detailScroll > max {
+					detailScroll = max
+				}
+			}
 			if detailScroll < 0 {
 				detailScroll = 0
 			}
 			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
 		}
+		if page == "favs" && favDetailID != "" {
+			favScroll -= delta / 120 * 90
+			if favScroll < 0 {
+				favScroll = 0
+			}
+			pInvalidateRect.Call(hwndMain, 0, 1)
+			return 0
+		}
 		if listMode() {
-			delta := int(int16(uint16((lParam >> 16) & 0xFFFF)))
 			listScroll -= delta / 120 * 90
 			if listScroll < 0 {
 				listScroll = 0
@@ -298,6 +311,9 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			loadOverview() // periodic refresh; guards itself on ovBusy
 		}
 		return 0
+	case 0x0014: // WM_ERASEBKGND — everything is painted in WM_PAINT;
+		// skipping the class-brush erase removes the per-invalidate flicker
+		return 1
 	case 0x000F: // WM_PAINT
 		var ps paintStruct
 		dc, _, _ := pBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))

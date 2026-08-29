@@ -196,8 +196,16 @@ type Detail struct {
 	StartDate  string      `json:"start_date"`
 	Duration   int         `json:"duration"`
 	Studios    []Studio    `json:"studios"`
+	Staff      []StaffMember `json:"staff"`
 	Characters []Character `json:"characters"`
 	Relations  []Relation  `json:"relations"`
+}
+
+// StaffMember is one credited production person (Chinese role + name).
+type StaffMember struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Role string `json:"role"`
 }
 
 // Relation is a linked entry of the same series (sequel/prequel/etc).
@@ -369,10 +377,77 @@ type Media struct {
 	Year    int     `json:"year"`
 	Status  string  `json:"status"`
 	Format  string  `json:"format"`
+	// CN holds the Chinese display title resolved via Bangumi (optional).
+	CN    string `json:"cn,omitempty"`
+	BgmID int    `json:"bgm_id,omitempty"`
 }
 
-// GetStudio fetches a production studio and its anime works from AniList.
+// GetStudio fetches a production studio and its anime works.
+// Chinese-first: Bangumi person subjects; AniList fallback keeps old ids working.
 func GetStudio(id int) (Works, error) {
+	if pid, _, err := BangumiPersonSearch(strconv.Itoa(id)); err == nil && pid > 0 {
+		// numeric names are not real person names; ignore
+		_ = pid
+	}
+	ws, err1 := bangumiWorksByName("", id)
+	if err1 == nil {
+		return ws, nil
+	}
+	return anilistStudio(id)
+}
+
+// GetStudioByName resolves a studio by Chinese/original name via Bangumi.
+func GetStudioByName(name string) (Works, error) {
+	return bangumiWorksByName(name, 0)
+}
+
+// bangumiWorksByName loads a person/studio works list from Bangumi.
+// When name is empty, idRef is an AniList id used for the local cache only.
+func bangumiWorksByName(name string, idRef int) (Works, error) {
+	if name == "" {
+		return Works{}, fmt.Errorf("no name")
+	}
+	pid, pname, err := BangumiPersonSearch(name)
+	if err != nil || pid <= 0 {
+		return Works{}, err
+	}
+	subs, err := BangumiPersonSubjects(pid)
+	if err != nil {
+		return Works{}, err
+	}
+	ws := Works{ID: pid, Name: pname}
+	for _, s := range subs {
+		ws.Media = append(ws.Media, Media{ID: s.ID, Title: s.NameCN, Cover: s.Image, CN: s.NameCN, BgmID: s.ID})
+	}
+	return ws, nil
+}
+
+// GetStaff fetches a voice actor and their credited anime.
+// Chinese-first via Bangumi; AniList fallback below.
+func GetStaff(id int) (Works, error) {
+	if ws, err := bangumiVAWorks(id); err == nil {
+		return ws, nil
+	}
+	return anilistStaff(id)
+}
+
+// bangumiVAWorks resolves a Bangumi person id directly (saved on the fav record).
+func bangumiVAWorks(personID int) (Works, error) {
+	subs, err := BangumiPersonSubjects(personID)
+	if err != nil || len(subs) == 0 {
+		return Works{}, err
+	}
+	ws := Works{ID: personID}
+	for _, s := range subs {
+		ws.Media = append(ws.Media, Media{ID: s.ID, Title: s.NameCN, Cover: s.Image, CN: s.NameCN, BgmID: s.ID})
+	}
+	return ws, nil
+}
+
+// RawMedia models the shared AniList media summary used by studio/staff queries.
+
+// anilistStudio is the previous AniList GraphQL studio works query.
+func anilistStudio(id int) (Works, error) {
 	query := `query($id:Int){Studio(id:$id){id name media(page:1 perPage:24 sort:START_DATE_DESC){nodes{id title{romaji english native} coverImage{extraLarge} averageScore startDate{year} status format}}}}`
 	var raw struct {
 		Data struct {
@@ -392,14 +467,14 @@ func GetStudio(id int) (Works, error) {
 	return ws, nil
 }
 
-// GetStaff fetches a voice actor (staff) and their credited anime from AniList.
-func GetStaff(id int) (Works, error) {
+// anilistStaff is the previous AniList GraphQL VA works query.
+func anilistStaff(id int) (Works, error) {
 	query := `query($id:Int){Staff(id:$id){id name{full} image{large} staffMedia(page:1 perPage:24 sort:START_DATE_DESC){nodes{id title{romaji english native} coverImage{extraLarge} averageScore startDate{year} status format}}}}`
 	var raw struct {
 		Data struct {
 			Staff struct {
-				ID         int    `json:"id"`
-				Name       struct {
+				ID    int    `json:"id"`
+				Name  struct {
 					Full string `json:"full"`
 				} `json:"name"`
 				Image      struct {
@@ -417,8 +492,6 @@ func GetStaff(id int) (Works, error) {
 	ws := Works{ID: raw.Data.Staff.ID, Name: raw.Data.Staff.Name.Full, Image: raw.Data.Staff.Image.Large, Media: parseMedia(raw.Data.Staff.StaffMedia.Nodes)}
 	return ws, nil
 }
-
-// RawMedia models the shared AniList media summary used by studio/staff queries.
 type RawMedia struct {
 	ID   int `json:"id"`
 	Title struct {
@@ -829,6 +902,79 @@ func bgmGet(u string, out interface{}) error {
 }
 
 const bangumiBase = "https://bgmapi.anibt.net"
+
+// BangumiPersonSearch resolves a person/studio name (Chinese or original) to
+// the first matching Bangumi person id. Empty id when nothing matches.
+func BangumiPersonSearch(keyword string) (int, string, error) {
+	if keyword == "" {
+		return 0, "", fmt.Errorf("empty keyword")
+	}
+	payload, _ := json.Marshal(map[string]any{"keyword": keyword})
+	req, err := http.NewRequest(http.MethodPost, bangumiBase+"/v0/search/persons?limit=5", bytes.NewReader(payload))
+	if err != nil {
+		return 0, "", err
+	}
+	req.Header.Set("User-Agent", moegirlUA)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	var raw struct {
+		Data []struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return 0, "", err
+	}
+	if len(raw.Data) == 0 {
+		return 0, "", fmt.Errorf("person not found: %s", keyword)
+	}
+	return raw.Data[0].ID, raw.Data[0].Name, nil
+}
+
+// BangumiPersonSubject is one anime a person worked on (Chinese title).
+type BangumiPersonSubject struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	NameCN string `json:"name_cn"`
+	Image string `json:"image"`
+	Staff string `json:"staff"`
+}
+
+// BangumiPersonSubjects lists anime (type=2) a person is credited on,
+// newest first. Used for studio / CV works pages (Chinese-first).
+func BangumiPersonSubjects(personID int) ([]BangumiPersonSubject, error) {
+	if personID <= 0 {
+		return nil, fmt.Errorf("bad person id")
+	}
+	body, err := bgmGetRaw(bangumiBase + "/v0/persons/" + strconv.Itoa(personID) + "/subjects")
+	if err != nil {
+		return nil, err
+	}
+	var arr []BangumiPersonSubject
+	if err := json.Unmarshal(body, &arr); err != nil {
+		return nil, err
+	}
+	out := make([]BangumiPersonSubject, 0, len(arr))
+	for _, it := range arr {
+		if it.ID == 0 {
+			continue
+		}
+		if it.NameCN == "" {
+			it.NameCN = it.Name
+		}
+		out = append(out, it)
+	}
+	return out, nil
+}
+
 
 func bgmGetRaw(u string) ([]byte, error) {
 	req, _ := http.NewRequest(http.MethodGet, u, nil)

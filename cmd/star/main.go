@@ -240,7 +240,9 @@ var (
 	detailLoading string // record id being enriched
 	detailInfo    *anime.Detail
 
-	detailScroll   int
+	detailScroll        int
+	detailContentBottom int // bottom Y of the last painted detail content
+
 	searchBusy    bool
 	searchQuery   string
 	searchResults []anime.Result
@@ -257,6 +259,7 @@ var (
 	listScroll int
 	// favs detail (works view)
 	favDetailID string
+	favScroll   int
 	favEntName  string
 	favEntType  string
 	favEntImage string
