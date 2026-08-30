@@ -289,7 +289,7 @@ func drawTextRect(dc uintptr, x, y, w, h int, text string, font uintptr, rgb uin
 
 // --- KB card mode helpers ---
 
-func kbCardMode() bool { return page == "kb" && kbCol == "anime" }
+func kbCardMode() bool { return page == "kb" }
 
 func kbGeom() (cx, cw, top, bottom int) {
 	w, h := clientSize()
@@ -430,11 +430,11 @@ func firstRune(s string) string {
 
 func statusColor(s string) uintptr {
 	switch s {
-	case "在看", "看过":
+	case "在看", "看过", "在读", "读过", "进行中":
 		return colAcc
-	case "想追", "想看", "想玩", "规划中":
+	case "想追", "想看", "想玩", "想读", "规划中":
 		return colAcc
-	case "搁置", "弃":
+	case "搁置", "弃", "已放弃":
 		return colDim
 	default:
 		return colCard2
@@ -723,6 +723,7 @@ func kbSetStatus(id, status string) {
 	d["status"] = status
 	_, _ = st.Update(kbCol, id, d)
 	kbReload()
+	webRefreshDetail()
 }
 
 func kbWatchInc(id string) {
@@ -744,6 +745,7 @@ func kbWatchInc(id string) {
 	d["watched"] = fmt.Sprintf("%d", w)
 	_, _ = st.Update(kbCol, id, d)
 	kbReload()
+	webRefreshDetail()
 }
 
 func kbDelete(id string) {
@@ -753,6 +755,7 @@ func kbDelete(id string) {
 	_ = st.Delete(kbCol, id)
 	detailID = ""
 	kbReload()
+	webRefreshDetail()
 }
 
 func kbAdd() {
@@ -766,8 +769,6 @@ func kbAdd() {
 		data["status"] = "想追"
 	case "study":
 		data["status"] = "规划中"
-	case "games":
-		data["status"] = "想玩"
 	}
 	rec, _ := st.Add(kbCol, data)
 	setText(hKbToA, "")
@@ -821,6 +822,9 @@ func bgmCoverAsync(id, title string) {
 // fetchDetailAsync pulls studios/cast/staff for the record being viewed,
 // then persists them into the record so later opens are instant.
 func fetchDetailAsync(id string) {
+	if kbCol != "anime" {
+		return // local-only columns never hit the network
+	}
 	rec := recByID(id)
 	if rec == nil {
 		return

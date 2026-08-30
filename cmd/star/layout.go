@@ -234,7 +234,8 @@ func relayout() {
 		moveWin(hProfDel, nx+nw+gap2, 412, scale(130), 42)
 	}
 	kbgap := 8
-	kbw := (contentW - 4*kbgap) / 5
+	kbN := len(kbCols)
+	kbw := (contentW - (kbN-1)*(kbgap+1)) / kbN
 	if kbw < 110 {
 		kbw = 110
 	}
@@ -307,7 +308,7 @@ func renderPage() {
 	}
 	pShowWindow.Call(hKbToA, pBool(kbon))
 	pShowWindow.Call(hKbAddBtn, pBool(kbon))
-	pShowWindow.Call(hKbSearchBtn, pBool(kbon))
+	pShowWindow.Call(hKbSearchBtn, pBool(kbon && kbCol == "anime")) // 网络搜索仅番剧栏目
 
 	cm := kbCardMode()
 	lm := listMode()

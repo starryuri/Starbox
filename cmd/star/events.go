@@ -198,7 +198,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			pInvalidateRect.Call(hwndMain, 0, 1)
 			return 0
 		}
-		if id >= KBTab && id < uintptr(KBTab+5) {
+		if id >= KBTab && id < uintptr(KBTab+uintptr(len(kbCols))) {
 			kbCol = kbCols[id-KBTab]
 			detailID = ""
 			detailInfo = nil

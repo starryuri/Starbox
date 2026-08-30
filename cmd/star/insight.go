@@ -496,7 +496,15 @@ func dirText() string {
 }
 
 // --- KB text list (non-anime tabs) ---
-var kbCols = []string{"anime", "books", "study", "games", "notes"}
-var kbColLabels = map[string]string{"anime": "番剧", "books": "书库", "study": "学习", "games": "游戏", "notes": "笔记"}
-var kbSecField = map[string]string{"anime": "status", "books": "author", "study": "status", "games": "platform", "notes": "tags"}
+var kbCols = []string{"anime", "books", "study", "notes"}
+var kbColLabels = map[string]string{"anime": "番剧", "books": "书库", "study": "学习", "notes": "笔记"}
+var kbSecField = map[string]string{"anime": "status", "books": "author", "study": "status", "notes": "tags"}
+
+// kbStatuses lists the status chips shown on each column's detail page.
+var kbStatuses = map[string][]string{
+	"anime": {"想追", "在看", "看过", "搁置"},
+	"books": {"想读", "在读", "读过", "搁置"},
+	"study": {"规划中", "进行中", "已完成", "已放弃"},
+	"notes": {},
+}
 

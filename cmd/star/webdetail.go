@@ -83,7 +83,7 @@ func buildDetailHTML(r *kb.Record) string {
 	q := url.QueryEscape
 	coverURI := coverDataURI(r.ID)
 
-	statuses := []string{"想追", "在看", "看过", "搁置"}
+	statuses := kbStatuses[kbCol]
 	var sb strings.Builder
 	sb.WriteString("<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">")
 	sb.WriteString("<style>")
@@ -135,15 +135,17 @@ func buildDetailHTML(r *kb.Record) string {
 	}
 	sb.WriteString("<div class='hero-main'>")
 	sb.WriteString("<h1>" + html.EscapeString(title) + "</h1>")
-	sb.WriteString("<div class='chips'>")
-	for _, s := range statuses {
-		on := " class='chip'"
-		if s == status {
-			on = " class='chip on'"
+	if len(statuses) > 0 {
+		sb.WriteString("<div class='chips'>")
+		for _, s := range statuses {
+			on := " class='chip'"
+			if s == status {
+				on = " class='chip on'"
+			}
+			sb.WriteString("<button" + on + " onclick=\"send('status','" + s + "','" + q(r.ID) + "')\">" + s + "</button>")
 		}
-		sb.WriteString("<button" + on + " onclick=\"send('status','" + q(r.ID) + "','" + s + "')\">" + s + "</button>")
+		sb.WriteString("</div>")
 	}
-	sb.WriteString("</div>")
 	if note != "" {
 		sb.WriteString("<div class='note'>" + html.EscapeString(note) + "</div>")
 	}
@@ -172,14 +174,28 @@ func buildDetailHTML(r *kb.Record) string {
 	// ---- bottom bar ----
 	sb.WriteString("<div class='bar'><div class='inner'>")
 	sb.WriteString("<button class='btn ghost' onclick=\"send('back','')\">← 返回</button>")
-	sb.WriteString("<button class='btn acc' onclick=\"send('watch','" + q(r.ID) + "')\">▶ 看一集 +1</button>")
-	sb.WriteString("<button class='btn danger' onclick=\"send('del','" + q(r.ID) + "')\">删除</button>")
+	if kbCol != "notes" {
+		watchLabel := "▶ 进度 +1"
+		switch kbCol {
+		case "anime":
+			watchLabel = "▶ 看一集 +1"
+		case "books":
+			watchLabel = "▶ 读一页 +1"
+		}
+		sb.WriteString("<button class='btn acc' onclick=\"send('watch','','" + q(r.ID) + "')\">" + watchLabel + "</button>")
+	}
+	sb.WriteString("<button class='btn danger' onclick=\"send('del','','" + q(r.ID) + "')\">删除</button>")
 	sb.WriteString("</div></div>")
 
 	// ---- bridge + data ----
-	detailJSON, _ := json.Marshal(detailForWeb(r))
+	dj := detailForWeb(r)
+	if kbCol != "anime" {
+		dj["plain"] = true
+	}
+	detailJSON, _ := json.Marshal(dj)
 	sb.WriteString("<script>")
-	sb.WriteString("function send(t,v,id){var m={t:t,v:v};if(id)m.id=id;window.chrome.webview.postMessage(JSON.stringify(m));}" + nlConst)
+	sb.WriteString("// send(t,v,id): t=msg type, v=payload, id=record id (always 3rd arg)" + nlConst)
+sb.WriteString("function send(t,v,id){var m={t:t,v:v};if(id)m.id=id;window.chrome.webview.postMessage(JSON.stringify(m));}" + nlConst)
 	sb.WriteString("window.onerror=function(e){send('err',String(e));};" + nlConst)
 	sb.WriteString("var DETAIL=" + string(detailJSON) + ";" + nlConst)
 	sb.WriteString(wvRenderScript(bg, card, card2, acc, fg, dim))
@@ -237,7 +253,7 @@ function render(){
     });
     sec3.appendChild(grid3);root.appendChild(sec3);
   }
-  if(!(D.studios&&D.studios.length)&&!(D.cast&&D.cast.length)&&!(D.staff&&D.staff.length)){
+  if(!D.plain&&!(D.studios&&D.studios.length)&&!(D.cast&&D.cast.length)&&!(D.staff&&D.staff.length)){
     var l=el('div','loading','资料加载中…（打开片刻后自动重试）');
     root.appendChild(l);
   }
