@@ -66,11 +66,12 @@ func webResize() {
 		return
 	}
 	cx, cw, top, bottom := kbGeom()
+	pShowWindow.Call(hWebViewHost, 5) // SW_SHOW: MoveWindow does not unhide
 	pMoveWindow.Call(hWebViewHost, uintptr(cx), uintptr(top), uintptr(cw), uintptr(bottom-top), 1)
 	if wvReady && wvChromium != nil {
 		wvChromium.Resize() // fills the host client area
 		_ = wvChromium.Show()
-	}
+	} // SW_SHOW after MoveWindow keeps parent+child in sync
 }
 
 func webHideDetail() {

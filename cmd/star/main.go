@@ -588,6 +588,7 @@ func main() {
 	pShowWindow.Call(hwndMain, 5)
 	pUpdateWindow.Call(hwndMain)
 	relayout()
+	webResize() // re-assert after first show (D3D layer sizing)
 
 
 	var msg msgStruct

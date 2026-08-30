@@ -446,6 +446,10 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			pSetBkMode.Call(wParam, 0)
 			pSetBkColor.Call(wParam, colCard)
 			return brushCard
+		case lParam == hWebViewHost:
+			// WebView host: sidebar bg while Chromium loads (never black)
+			pSetBkColor.Call(wParam, colSide)
+			return brushBg
 		default:
 			pSetTextColor.Call(wParam, colFg)
 			pSetBkMode.Call(wParam, 1)
@@ -471,8 +475,14 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			return 0
 		}
 		relayout()
+		webResize() // keep web layer synced on resize
 		r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
 		return r
+	case 0x0003: // WM_MOVE
+		if wvReady && wvChromium != nil {
+			_ = wvChromium.NotifyParentWindowPositionChanged()
+		}
+		// fallthrough to defproc below
 	case 0x0010: // WM_CLOSE
 		closeBehavior() // exit or hide-to-tray per settings
 		return 0
