@@ -134,6 +134,7 @@ func switchTheme(id string) {
 		if th.ID == id {
 			activeThemeID = id
 			applyTheme()
+			webDataVer++ // page colors follow the theme
 			saveThemeChoice()
 			if hwndMain != 0 {
 				pInvalidateRect.Call(hwndMain, 0, 1)

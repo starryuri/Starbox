@@ -51,6 +51,10 @@ func hitTestKB(x, y int) string {
 }
 
 func paintFragment(dc uintptr) {
+	// Hide the web layer unless an anime detail page is showing.
+	if !(kbCardMode() && detailID != "" && !searchMode) {
+		webHideDetail()
+	}
 	// status strip under the page title (errors / notices)
 	cx, cw, top, _ := kbGeom()
 	paintStatusStrip(dc, cx, top-52, cw)
@@ -81,6 +85,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			detailID = ""
 			favDetailID = ""
 			searchMode = false
+			webHideDetail()
 			highlightNav()
 			renderPage()
 			pInvalidateRect.Call(hwndMain, 0, 1)
@@ -196,14 +201,13 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		if id >= KBTab && id < uintptr(KBTab+5) {
 			kbCol = kbCols[id-KBTab]
 			detailID = ""
+			detailInfo = nil
+			detailScroll = 0
 			kbScroll = 0
 			searchMode = false
-			if kbCardMode() {
-				refreshKB()
-				pInvalidateRect.Call(hwndMain, 0, 1)
-			} else {
-				setText(hBody, kbText())
-			}
+			searchResults = nil
+			webHideDetail()
+			renderPage()
 			return 0
 		}
 		if id == KBAdd {
@@ -396,7 +400,13 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			setText(hHint, bindStatus)
 		}
 		return 0
+	case wmDebugCard:
+		if kbCardMode() && len(kbRecs) > 0 {
+			onKBHit("card", kbRecs[0].ID)
+		}
+		return 0
 	case wmDetail:
+		webDataVer++
 		if kbCardMode() && detailID != "" {
 			pInvalidateRect.Call(hwnd, 0, 1)
 		}

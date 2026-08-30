@@ -96,6 +96,7 @@ const (
 	wmDetail     = 0x800A
 	wmStatusTick = 0x800C
 	wmBindDone      = 0x800B
+	wmDebugCard     = 0x8010
 )
 
 // DrawText flags
@@ -580,6 +581,8 @@ func main() {
 	subclassEditWheel(hKbToA)
 	subclassEditWheel(hAcc)
 	subclassEditWheel(hPass)
+
+	webInit()
 	renderPage()
 
 	pShowWindow.Call(hwndMain, 5)

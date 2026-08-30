@@ -457,6 +457,11 @@ func paintKBDetail(dc uintptr) {
 	cx, cw, top, bottom := kbGeom()
 	detHits = nil
 	fillRectColor(dc, cx, top, cw, bottom-top, colSide)
+	// WebView2 path: the Chromium host draws over this area; GDI fallback
+	// keeps working when WebView2 is missing.
+	if webShowDetail() {
+		return
+	}
 	if r == nil {
 		drawTextRect(dc, cx, top, cw, 60, "（条目不存在或已删除）", fontBody, colDim, dtLeft)
 		return
@@ -1113,6 +1118,7 @@ func favExists(name string) bool {
 // favToggle adds or removes a studio/cast favorite.
 // alID is the Bangumi person id (Chinese works) with anilist id as fallback.
 func favToggle(name, typ string, alID int) {
+	defer webRefreshDetail()
 	recs, _ := st.List("favs")
 	for _, r := range recs {
 		if n, _ := r.Data["name"].(string); n == name {
@@ -1148,8 +1154,8 @@ func drawScrollIndicator(dc uintptr, contentH, viewH, scroll, x, w int) {
 	fillRectColor(dc, x, y, w, trackH, colAcc)
 }
 
-// then generic lists) — mirrors the click handlers.
-// then generic lists) — mirrors the click handlers.
+// hitAt resolves a click position to (action, id) for card walls and
+// then generic lists — mirrors the click handlers.
 func hitAt(x, y int) (string, string) {
 	if kbCardMode() {
 		if h := hitTestKB(x, y); h != "" {

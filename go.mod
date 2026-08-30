@@ -3,12 +3,14 @@ module butler
 go 1.22
 
 require (
+	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/sys v0.20.0
 )
 
 require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
