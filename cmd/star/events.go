@@ -68,6 +68,23 @@ func paintFragment(dc uintptr) {
 	}
 	if listMode() {
 		paintListPage(dc)
+		return
+	}
+	// full-page web layers (fall back to the old text body when WebView2
+	// is unavailable — hBody text painters already ran there)
+	switch page {
+	case "disk":
+		if diskWebShow() {
+			return
+		}
+	case "insight":
+		if insightWebShow() {
+			return
+		}
+	case "settings":
+		if settingsWebShow() {
+			return
+		}
 	}
 }
 
@@ -174,6 +191,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 			pSendMessage.Call(hSilent, 0x00F0, 0, 0) // BM_GETCHECK
 			silent = func() uintptr { v, _, _ := pSendMessage.Call(hSilent, 0x00F0, 0, 0); return v }()
 			stt := settings.Load(curProfDir)
+		stt.UiScale = uiScale
 			stt.AutoStart = on == 1
 			stt.SilentStart = silent == 1
 			qe, _, _ := pSendMessage.Call(hQuitE, 0x00F0, 0, 0)
@@ -216,6 +234,20 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		}
 		if id == KBSearch {
 			runAnimeSearch()
+			return 0
+		}
+		if id == KBImport {
+			kbImportBooks()
+			return 0
+		}
+		if id == IDUiN || id == IDUiM || id == IDUiL {
+			nsc := 100
+			if id == IDUiM {
+				nsc = 125
+			} else if id == IDUiL {
+				nsc = 150
+			}
+			applyUiScale(nsc)
 			return 0
 		}
 	case 0x0202: // WM_LBUTTONUP
@@ -382,7 +414,17 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintp
 		return 0
 	case wmDisk:
 		if page == "disk" {
-			setText(hBody, dskBody)
+			if !diskWebShow() {
+				setText(hBody, dskBody)
+			} else {
+				pInvalidateRect.Call(hwndMain, 0, 1)
+			}
+		}
+		return 0
+	case wmDiskWeb:
+		if page == "disk" && wvVisible && wvPage == "disk" {
+			wvNavKey = "" // force re-render with fresh payload
+			pInvalidateRect.Call(hwndMain, 0, 1)
 		}
 		return 0
 	case wmRss:

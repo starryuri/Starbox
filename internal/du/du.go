@@ -8,8 +8,9 @@ import (
 
 // Item is one top-level entry under a scanned path.
 type Item struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	IsDir bool   `json:"is_dir,omitempty"`
 }
 
 // Scan lists the direct children of root and reports the total size of each.
@@ -23,7 +24,7 @@ func Scan(root string, limit int) ([]Item, error) {
 	items := make([]Item, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
-			items = append(items, Item{Name: e.Name(), Size: dirSize(filepath.Join(root, e.Name()))})
+			items = append(items, Item{Name: e.Name(), Size: dirSize(filepath.Join(root, e.Name())), IsDir: true})
 		} else if info, err := e.Info(); err == nil {
 			items = append(items, Item{Name: e.Name(), Size: info.Size()})
 		}

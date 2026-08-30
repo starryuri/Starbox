@@ -3,6 +3,11 @@
 package main
 
 import (
+	"path/filepath"
+"golang.org/x/sys/windows"
+"unsafe"
+"butler/internal/settings"
+
 	"fmt"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -211,3 +216,92 @@ func paintSearchResults(dc uintptr) {
 
 // --- generic themed list page (favs / notify / rules) ---
 
+
+
+// --- books: local e-book import & open ---
+
+// kbImportBooks shows a multi-select file dialog and imports the chosen
+// e-books into the books column with auto-filled title/format metadata.
+func kbImportBooks() {
+	filter := "电子书文件\x00*.pdf;*.epub;*.mobi;*.azw3;*.txt\x00所有文件\x00*.*\x00\x00"
+	paths := comdlgOpenFile("导入电子书", filter, 0x200 | 0x00000200) // OFN_EXPLORER|OFN_ALLOWMULTISELECT
+	if len(paths) == 0 {
+		return
+	}
+	added := 0
+	for _, path := range paths {
+		if importLocalBook(path) {
+			added++
+		}
+	}
+	SetStatus("已导入 %d 本电子书", added)
+	refreshKB()
+	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
+// importLocalBook adds one file as a books record. Returns false when
+// skipped (duplicate path or unreadable).
+func importLocalBook(path string) bool {
+	abspath := path
+	if v, err := filepath.Abs(path); err == nil {
+		abspath = v
+	}
+	books, _ := st.List("books")
+	for _, b := range books {
+		if f, _ := b.Data["file"].(string); strings.EqualFold(f, abspath) {
+			return false
+		}
+	}
+	ext := strings.TrimPrefix(filepath.Ext(abspath), ".")
+	title := strings.TrimSuffix(filepath.Base(abspath), filepath.Ext(abspath))
+	if title == "" {
+		title = filepath.Base(abspath)
+	}
+	data := map[string]interface{}{
+		"title":  title,
+		"status": "想读",
+		"file":   abspath,
+		"format": strings.ToLower(ext),
+	}
+	_, err := st.Add("books", data)
+	return err == nil
+}
+
+// openLocalBook launches the book file with its associated application
+// (Edge/SumatraPDF/Kindle app... — whatever Windows associates).
+func openLocalBook(path string) {
+	if path == "" {
+		return
+	}
+	shell32 := windows.NewLazySystemDLL("shell32.dll")
+	ShellExecuteW := shell32.NewProc("ShellExecuteW")
+	op, _ := windows.UTF16PtrFromString("open")
+	fp, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		SetError("无法打开：%s", path)
+		return
+	}
+	ShellExecuteW.Call(0, uintptr(unsafe.Pointer(op)), uintptr(unsafe.Pointer(fp)), 0, 0, 5)
+}
+
+// --- settings: ui scale ---
+
+// applyUiScale switches the content scale immediately and persists the
+// choice. uiScale is consumed by scale() across layout, fonts and painting.
+func applyUiScale(nsc int) {
+	if nsc != 125 && nsc != 150 {
+		nsc = 100
+	}
+	uiScale = nsc
+	stt := settings.Load(curProfDir)
+	stt.UiScale = nsc
+	if err := settings.Save(curProfDir, stt); err != nil {
+		SetError("保存界面缩放失败：%v", err)
+	}
+	SetStatus("界面缩放 %d%%", nsc)
+	kbScroll = 0
+	detailScroll = 0
+	relayout()
+	renderPage()
+	pInvalidateRect.Call(hwndMain, 0, 1)
+}

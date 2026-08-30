@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jchv/go-webview2/pkg/edge"
@@ -21,6 +22,8 @@ var (
 	wvFailed   bool
 	wvVisible  bool
 	hWebViewHost uintptr
+	wvPage      string // which page owns the web layer: "detail" | "disk" | "insight" | "settings"
+	wvNavKey    string // last navigated page+version key (avoid redundant NavigateToString)
 	wvDetailID  string // record currently rendered in the web layer
 	wvVer       int    // webDataVer snapshot at last navigation
 	webDataVer  int    // bump when detail data/theme changed
@@ -66,6 +69,9 @@ func webResize() {
 		return
 	}
 	cx, cw, top, bottom := kbGeom()
+	if wvPage == "disk" || wvPage == "insight" || wvPage == "settings" {
+		cx, cw, top, bottom = pageGeom()
+	}
 	pShowWindow.Call(hWebViewHost, 5) // SW_SHOW: MoveWindow does not unhide
 	pMoveWindow.Call(hWebViewHost, uintptr(cx), uintptr(top), uintptr(cw), uintptr(bottom-top), 1)
 	if wvReady && wvChromium != nil {
@@ -75,6 +81,7 @@ func webResize() {
 }
 
 func webHideDetail() {
+	wvPage = ""
 	if wvVisible {
 		wvVisible = false
 		webResize()
@@ -92,11 +99,14 @@ func webShowDetail() bool {
 		webHideDetail()
 		return true
 	}
+	wvPage = "detail"
 	wvVisible = true
 	webResize()
 	if wvDetailID != r.ID || wvVer != webDataVer {
 		wvDetailID = r.ID
 		wvVer = webDataVer
+		key := "detail|" + r.ID
+		wvNavKey = key
 		wvChromium.NavigateToString(buildDetailHTML(r))
 	}
 	return true
@@ -109,6 +119,50 @@ func webRefreshDetail() {
 		pInvalidateRect.Call(hwndMain, 0, 1)
 	}
 }
+
+// webShowPage claims the web layer for a full-content page (disk/insight/
+// settings) and renders html. Safe to call repeatedly: navigation happens
+// only when the payload key changes.
+func webShowPage(name, key, html string) bool {
+	if !wvReady || wvFailed || wvChromium == nil {
+		return false
+	}
+	wvPage = name
+	wvVisible = true
+	webResize()
+	if wvNavKey != key {
+		wvNavKey = key
+		wvDetailID = ""
+		wvChromium.NavigateToString(html)
+	}
+	return true
+}
+
+// webOwner returns the current owner page ("" when hidden).
+func webOwner() string {
+	if !wvVisible {
+		return ""
+	}
+	return wvPage
+}
+
+// atoiDefault2 parses an int with fallback 0.
+func atoiDefault2(s string) int {
+	n := 0
+	_, _ = fmt.Sscanf(s, "%d", &n)
+	return n
+}
+
+// webRefreshPage re-renders a full page in the web layer (bumps its key).
+func webRefreshPage(name string) {
+	webPageVers[name]++
+	if hwndMain != 0 && wvVisible && wvPage == name {
+		pInvalidateRect.Call(hwndMain, 0, 1)
+	}
+}
+
+// webPageVers holds per-page re-render counters.
+var webPageVers = map[string]int{}
 
 // webOnMessage handles postMessage from the detail page.
 func webOnMessage(msg string) {
@@ -140,6 +194,23 @@ func webOnMessage(msg string) {
 		kbWatchInc(m.ID)
 	case "del":
 		kbDelete(m.ID)
+	case "openbook":
+		openLocalBook(m.Val)
+	case "openpath":
+		openLocalFolder(m.Val)
+	case "opendir":
+		diskDrillInto(m.Val)
+	case "setscale":
+		if n, err := strconv.Atoi(m.Val); err == nil {
+			applyUiScale(n)
+		}
+	case "refreshins":
+		refreshInsight()
+		webRefreshPage("insight")
+	case "open":
+		openURL(m.Val)
+	case "set":
+		webSettingsAction(m.Val)
 	}
 }
 

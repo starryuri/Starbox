@@ -3,6 +3,8 @@
 package main
 
 import (
+	"path/filepath"
+
 	"context"
 	"fmt"
 	_ "image/gif"
@@ -218,6 +220,14 @@ func loadInsight() {
 		insText = insightInfo()
 		insCacheText = insText
 		insCacheAt = time.Now()
+		if repos, err := githot.Trending(7, ""); err == nil {
+			insTrendCache = repos
+		}
+		if bindToken != "" {
+			if repos, err := githot.MyRepos(bindToken); err == nil {
+				insMineCache = repos
+			}
+		}
 		insBusy = false
 		pPostMessage.Call(hwndMain, uintptr(wmInsight), 0, 0)
 	}()
@@ -234,7 +244,16 @@ func refreshInsight() {
 	setText(hInfo, "（正在刷新…）")
 	go func() {
 		insText = insightInfo()
+		if repos, err := githot.Trending(7, ""); err == nil {
+			insTrendCache = repos
+		}
+		if bindToken != "" {
+			if repos, err := githot.MyRepos(bindToken); err == nil {
+				insMineCache = repos
+			}
+		}
 		insBusy = false
+		webRefreshPage("insight")
 		pPostMessage.Call(hwndMain, uintptr(wmAppRefreshNow), 0, 0)
 	}()
 }
@@ -243,6 +262,8 @@ func refreshInsight() {
 var (
 	insCacheText string
 	insCacheAt   time.Time
+	insTrendCache []githot.Repo
+	insMineCache  []githot.Repo
 )
 
 // disk scan results are expensive (full C:\ walk); cache for 10 minutes.
@@ -496,15 +517,170 @@ func dirText() string {
 }
 
 // --- KB text list (non-anime tabs) ---
-var kbCols = []string{"anime", "books", "study", "notes"}
-var kbColLabels = map[string]string{"anime": "番剧", "books": "书库", "study": "学习", "notes": "笔记"}
-var kbSecField = map[string]string{"anime": "status", "books": "author", "study": "status", "notes": "tags"}
+var kbCols = []string{"anime", "books", "notes"}
+var kbColLabels = map[string]string{"anime": "番剧", "books": "书库", "notes": "笔记"}
+var kbSecField = map[string]string{"anime": "status", "books": "status", "notes": "tags"}
 
 // kbStatuses lists the status chips shown on each column's detail page.
 var kbStatuses = map[string][]string{
 	"anime": {"想追", "在看", "看过", "搁置"},
 	"books": {"想读", "在读", "读过", "搁置"},
-	"study": {"规划中", "进行中", "已完成", "已放弃"},
 	"notes": {},
 }
 
+
+// migrateStudyIntoBooks folds the retired "study" column into "books" once.
+// Statuses are remapped onto the book vocabulary; the old study.json is
+// renamed to study.migrated so the data is never silently destroyed.
+func migrateStudyIntoBooks() {
+	marker := filepath.Join(curProfDir, "study.migrated")
+	if _, err := osStat(marker); err == nil {
+		return
+	}
+	recs, err := st.List("study")
+	if err != nil {
+		_ = osWriteFile(marker, []byte("err"), 0o644)
+		return
+	}
+	moved := 0
+	if len(recs) > 0 {
+		books, _ := st.List("books")
+		exist := map[string]bool{}
+		for _, b := range books {
+			ti, _ := b.Data["title"].(string)
+			exist[ti] = true
+		}
+		for _, r := range recs {
+			ti, _ := r.Data["title"].(string)
+			if ti == "" || exist[ti] {
+				continue
+			}
+			d := copyMap(r.Data)
+			switch s, _ := d["status"].(string); s {
+			case "规划中":
+				d["status"] = "想读"
+			case "进行中":
+				d["status"] = "在读"
+			case "已完成":
+				d["status"] = "读过"
+			case "已放弃":
+				d["status"] = "搁置"
+			}
+			delete(d, "watched")
+			_, _ = st.Add("books", d)
+			moved++
+		}
+	}
+	_ = osWriteFile(marker, []byte("ok"), 0o644)
+	if moved > 0 {
+		SetStatus("已将学习栏目 %d 条记录并入书库", moved)
+	}
+}
+
+// diskPartInfos converts gopsutil partitions into the web payload shape.
+func diskPartInfos() []diskPartJSON {
+	out := []diskPartJSON{}
+	parts, err := disk.Partitions(false)
+	if err != nil {
+		return out
+	}
+	for _, p := range parts {
+		if u, err := disk.Usage(p.Mountpoint); err == nil && u.Total > 0 {
+			out = append(out, diskPartJSON{
+				Mount: p.Mountpoint,
+				Pct:   u.UsedPercent,
+				Used:  humanBytes(u.Used),
+				Total: humanBytes(u.Total),
+			})
+		}
+	}
+	return out
+}
+
+// ---------- full-page web renderers (called from paintFragment) ----------
+
+// diskWebShow renders the disk page through WebView2; returns false when
+// WebView2 is unavailable (caller falls back to the GDI text body).
+func diskWebShow() bool {
+	if page != "disk" {
+		return false
+	}
+	if diskCachePath == "" && diskLastScan.Parts == nil && !dskBusy {
+		go diskScanAsync("", false)
+	}
+	diskWebMu.Lock()
+	pl := diskLastScan
+	ver := webPageVers["disk"]
+	diskWebMu.Unlock()
+	key := "disk|" + pl.Path + "|" + fmt.Sprintf("%d", ver) + "|" + fmt.Sprintf("%d", len(pl.Parts)) + "|" + fmt.Sprintf("%d", len(pl.Items))
+	return webShowPage("disk", key, buildDiskHTML(pl))
+}
+
+// insightWebShow renders the insight page through WebView2.
+func insightWebShow() bool {
+	if page != "insight" {
+		return false
+	}
+	loadBind()
+	loadInsightAsync()
+	pl := insightPayload{
+		Bound: bindToken != "",
+		Login: bindLogin,
+		CPU:   ovStat[0],
+		Mem:   ovStat[1],
+		Up:    ovStat[2],
+		Disk:  ovStat[3],
+	}
+	if insTrendCache != nil {
+		pl.Trend = insTrendCache
+	}
+	if insMineCache != nil {
+		pl.Mine = insMineCache
+	}
+	ver := webPageVers["insight"]
+	key := "insight|" + fmt.Sprintf("%d", ver) + "|" + pl.Login + "|" + fmt.Sprintf("%d", len(pl.Trend)) + "|" + fmt.Sprintf("%d", len(pl.Mine)) + "|" + pl.CPU
+	return webShowPage("insight", key, buildInsightHTML(pl))
+}
+
+// settingsWebShow renders the settings page through WebView2.
+func settingsWebShow() bool {
+	if page != "settings" {
+		return false
+	}
+	stt := settingsLoad()
+	sc := stt.UiScale
+	if sc != 125 && sc != 150 {
+		sc = 100
+	}
+	ver := webPageVers["settings"]
+	key := "settings|" + fmt.Sprintf("%d", ver) + "|" + stt.QuitAction + "|" + fmt.Sprintf("%v", stt.AutoStart) + fmt.Sprintf("%v", stt.SilentStart) + "|" + fmt.Sprintf("%d", sc)
+	return webShowPage("settings", key, buildSettingsHTML(sc, stt.QuitAction == "exit", stt.AutoStart, stt.SilentStart))
+}
+
+// loadInsightAsync starts the insight fetch if not already running.
+// (Kept separate from loadInsight so the web renderer never calls setText
+// on GDI controls that may be hidden.)
+func loadInsightAsync() {
+	if insCacheText != "" && time.Since(insCacheAt) < 10*time.Minute {
+		return
+	}
+	if insBusy {
+		return
+	}
+	insBusy = true
+	go func() {
+		insText = insightInfo()
+		insCacheText = insText
+		insCacheAt = time.Now()
+		if repos, err := githot.Trending(7, ""); err == nil {
+			insTrendCache = repos
+		}
+		if bindToken != "" {
+			if repos, err := githot.MyRepos(bindToken); err == nil {
+				insMineCache = repos
+			}
+		}
+		insBusy = false
+		pPostMessage.Call(hwndMain, uintptr(wmInsight), 0, 0)
+	}()
+}

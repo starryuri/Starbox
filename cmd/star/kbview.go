@@ -367,6 +367,18 @@ func kbs2cards() []kbCard {
 		row := i / cols
 		title, _ := r.Data["title"].(string)
 		status, _ := r.Data["status"].(string)
+		if kbCol == "books" && status == "" {
+			author, _ := r.Data["author"].(string)
+			fmtS, _ := r.Data["format"].(string)
+			sub := author
+			if fmtS != "" {
+				if sub != "" {
+					sub += " · "
+				}
+				sub += strings.ToUpper(fmtS)
+			}
+			status = sub
+		}
 		x := cx + col*(cardW+gap)
 		y := top + row*(cardH+gap) - kbScroll
 		out = append(out, kbCard{id: r.ID, title: title, status: status, x: x, y: y, w: cardW, h: cardH})
@@ -414,6 +426,13 @@ func paintKBCards(dc uintptr) {
 		ty := c.y + coverH
 		// DT_END_ELLIPSIS (0x00008000): "长标题…" instead of mid-glyph cut
 		drawTextRect(dc, c.x+6, ty+scale(4), c.w-12, scale(30), c.title, fontBody, colFg, dtSingle|0x00008000)
+		if kbCol == "books" {
+			if rec := recByID(c.id); rec != nil {
+				if bt, ok := bookProgress(rec); ok {
+					drawTextRect(dc, c.x+6, ty+scale(38), c.w-12, scale(26), bt, fontTiny, colDim, dtSingle|dtVCenter)
+				}
+			}
+		}
 		sc := statusColor(c.status)
 		fillRectColor(dc, c.x+6, ty+scale(40), c.w-12, scale(26), sc)
 		drawTextRect(dc, c.x+6, ty+scale(40), c.w-12, scale(26), c.status, fontTiny, colOnAcc, dtSingle|dtVCenter)
@@ -767,8 +786,8 @@ func kbAdd() {
 	switch kbCol {
 	case "anime":
 		data["status"] = "想追"
-	case "study":
-		data["status"] = "规划中"
+	case "books":
+		data["status"] = "想读"
 	}
 	rec, _ := st.Add(kbCol, data)
 	setText(hKbToA, "")
@@ -1221,3 +1240,14 @@ func updateHover(x, y int) bool {
 
 // ---------- hover + cursor management (custom-drawn buttons) ----------
 
+
+// bookProgress renders "在读 34%" / "读过" for book cards when progress
+// information exists (progress percent or watched pages vs total).
+func bookProgress(r *kb.Record) (string, bool) {
+	if p, ok := r.Data["progress"].(float64); ok && p > 0 {
+		if s, _ := r.Data["status"].(string); s != "" {
+			return s + " " + fmt.Sprintf("%.0f%%", p), true
+		}
+	}
+	return "", false
+}

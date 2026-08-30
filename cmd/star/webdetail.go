@@ -39,6 +39,10 @@ const nlConst = "\n"
 
 func osReadFile(p string) ([]byte, error) { return os.ReadFile(p) }
 
+func osStat(p string) (os.FileInfo, error) { return os.Stat(p) }
+
+func osWriteFile(p string, b []byte, mode os.FileMode) error { return os.WriteFile(p, b, mode) }
+
 func base64Encode(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
 func hexColor(c uintptr) string {
@@ -174,6 +178,10 @@ func buildDetailHTML(r *kb.Record) string {
 	// ---- bottom bar ----
 	sb.WriteString("<div class='bar'><div class='inner'>")
 	sb.WriteString("<button class='btn ghost' onclick=\"send('back','')\">← 返回</button>")
+	file, _ := data["file"].(string)
+	if file != "" {
+		sb.WriteString("<button class='btn acc' onclick=\\\"send('openbook','" + q(file) + "')\\\"> 打开阅读</button>")
+	}
 	if kbCol != "notes" {
 		watchLabel := "▶ 进度 +1"
 		switch kbCol {

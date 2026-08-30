@@ -66,6 +66,22 @@ func computeUiScale() {
 }
 
 // scale adjusts a logical pixel value for the effective UI density.
+// pageGeom returns the content area rect for full-page web layers
+// (disk/insight/settings pages render inside this rect).
+func pageGeom() (int, int, int, int) {
+	var rc rect
+	pGetClientRect.Call(hwndMain, uintptr(unsafe.Pointer(&rc)))
+	w, h := int(rc.Right), int(rc.Bottom)
+	sidebarW := scale(320)
+	contentX := sidebarW + scale(30)
+	contentW := w - contentX - scale(30)
+	if contentW < scale(260) {
+		contentW = scale(260)
+	}
+	top := scale(106)
+	return contentX, contentW, top, h - scale(34)
+}
+
 func scale(n int) int {
 	if uiScale <= 100 || uiScale > 500 {
 		return n
@@ -233,6 +249,19 @@ func relayout() {
 		moveWin(hProfNew, nx, 412, nw, 42)
 		moveWin(hProfDel, nx+nw+gap2, 412, scale(130), 42)
 	}
+	// ui-scale row + about line
+	uw := scale(150)
+	ugap := scale(10)
+	if 3*(uw+ugap) > contentW {
+		uw = (contentW - 2*ugap) / 3
+		if uw < scale(110) {
+			uw = scale(110)
+		}
+	}
+	moveWin(hUiN, contentX, 580, uw, 44)
+	moveWin(hUiM, contentX+uw+ugap, 580, uw, 44)
+	moveWin(hUiL, contentX+2*(uw+ugap), 580, uw, 44)
+	moveWin(hSetVer, contentX, 634, contentW, 32)
 	kbgap := 8
 	kbN := len(kbCols)
 	kbw := (contentW - (kbN-1)*(kbgap+1)) / kbN
@@ -256,6 +285,7 @@ func relayout() {
 	}
 	moveWin(hKbAddBtn, btn2x, 178, 150, 48)
 	moveWin(hKbSearchBtn, btn2x+160, 178, 160, 48)
+	moveWin(hKbImportBtn, btn2x+320, 178, 160, 48)
 	kbScroll = 0
 	if kbCardMode() {
 		refreshKB()
@@ -309,9 +339,14 @@ func renderPage() {
 	pShowWindow.Call(hKbToA, pBool(kbon))
 	pShowWindow.Call(hKbAddBtn, pBool(kbon))
 	pShowWindow.Call(hKbSearchBtn, pBool(kbon && kbCol == "anime")) // 网络搜索仅番剧栏目
+	pShowWindow.Call(hKbImportBtn, pBool(kbon && kbCol == "books")) // 导入电子书仅书库栏目
+	pShowWindow.Call(hUiN, pBool(setSet))
+	pShowWindow.Call(hUiM, pBool(setSet))
+	pShowWindow.Call(hUiL, pBool(setSet))
+	pShowWindow.Call(hSetVer, pBool(setSet))
 
 	cm := kbCardMode()
-	lm := listMode()
+	lm := listMode() && page == "favs"
 	pShowWindow.Call(hBody, pBool(!insight && !setSet && !cm && !lm))
 	if cm || lm {
 		setText(hBody, "")
@@ -337,6 +372,14 @@ func renderPage() {
 			pSendMessage.Call(hQuitE, 0x00F1, 0, 0)
 			pSendMessage.Call(hQuitT, 0x00F1, 1, 0)
 		}
+		sc := stt.UiScale
+		if sc != 125 && sc != 150 {
+			sc = 100
+		}
+		pSendMessage.Call(hUiN, 0x00F1, pBool(sc == 100), 0)
+		pSendMessage.Call(hUiM, 0x00F1, pBool(sc == 125), 0)
+		pSendMessage.Call(hUiL, 0x00F1, pBool(sc == 150), 0)
+		setText(hSetVer, "星匣 STARBOX v"+appVersion+"  ·  数据目录 "+dataDir)
 		body = ""
 	case kbon:
 		if cm {
@@ -346,7 +389,10 @@ func renderPage() {
 			body = kbText()
 		}
 	case page == "disk":
-		loadDisk()
+		go diskScanAsync("", false) // prefetch web payload
+		if !diskWebShow() {
+			loadDisk() // GDI fallback
+		}
 		body = "（正在扫描磁盘…）"
 	case page == "rss":
 		loadRSS()

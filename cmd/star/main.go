@@ -20,6 +20,7 @@ import (
 	"butler/internal/anime"
 	"butler/internal/config"
 	"butler/internal/kb"
+	"butler/internal/settings"
 
 )
 
@@ -64,10 +65,15 @@ const (
 	IDProfNew  = 611
 	IDProfDel  = 612
 	IDProfName = 613
-	KBTab    = 701 // 5 tabs: 701..705
+	KBTab    = 701 // tabs: 701..703
 	KBToA    = 706 // add title edit
 	KBAdd    = 707 // add button
 	KBSearch = 708 // search button
+	KBImport = 709 // books: import local e-book files
+	IDSetVer = 514 // settings: version line
+	IDUiN    = 614 // ui scale 100%
+	IDUiM    = 615 // ui scale 125%
+	IDUiL    = 616 // ui scale 150%
 )
 
 func pBool(b bool) uintptr {
@@ -78,6 +84,9 @@ func pBool(b bool) uintptr {
 }
 
 const dataDirName = "data"
+
+// appVersion is shown on the settings page and used by the release process.
+const appVersion = "1.2.8"
 
 // GDI / painting constants
 const (
@@ -97,6 +106,7 @@ const (
 	wmStatusTick = 0x800C
 	wmBindDone      = 0x800B
 	wmDebugCard     = 0x8010
+	wmDiskWeb       = 0x8011
 )
 
 // DrawText flags
@@ -109,11 +119,11 @@ const (
 	dtNoPrefix  = 0x0800
 )
 
-var pages = []string{"overview", "disk", "rss", "insight", "kb", "favs", "notify", "rules", "settings"}
+var pages = []string{"overview", "disk", "rss", "insight", "kb", "favs", "notify", "settings"}
 
 var pageLabels = map[string]string{
 	"overview": "概况", "disk": "磁盘", "rss": "订阅", "insight": "情报",
-	"kb": "知识库", "favs": "收藏", "notify": "通知", "rules": "规则", "settings": "设置",
+	"kb": "知识库", "favs": "收藏", "notify": "通知", "settings": "设置",
 }
 
 // colors (COLORREF 0x00BBGGRR)
@@ -214,6 +224,9 @@ var (
 	hKbTab              [5]uintptr
 	hKbToA, hKbAddBtn   uintptr
 	hKbSearchBtn        uintptr
+	hKbImportBtn        uintptr
+	hUiN, hUiM, hUiL    uintptr
+	hSetVer             uintptr
 	page                string
 	dataDir             string
 	wndProc             = syscall.NewCallback(wndProcMain)
@@ -402,6 +415,19 @@ func drawItem(diPtr uintptr) uintptr {
 	case id == KBSearch:
 		drawBtn(di, colAcc, colOnAcc)
 		return 1
+	case id == KBImport:
+		drawBtn(di, colAcc, colOnAcc)
+		return 1
+	case id == IDUiN, id == IDUiM, id == IDUiL:
+		fill := uintptr(colCard2)
+		tc := uintptr(colFg)
+		want := map[uintptr]int{IDUiN: 100, IDUiM: 125, IDUiL: 150}[id]
+		if want == uiScale {
+			fill = colAcc
+			tc = colOnAcc
+		}
+		drawBtn(di, fill, tc)
+		return 1
 	case id >= IDPlat && id < IDPlat+4:
 		fill := uintptr(colCard2)
 		tc := uintptr(colFg)
@@ -454,6 +480,7 @@ func main() {
 	cfg, _ = config.Load(filepath.Join(filepath.Dir(exe), "config.json"))
 	initProfiles() // migrate legacy data on first run + resolve identity
 	st = kb.New(curProfDir)
+	migrateStudyIntoBooks()
 	loadThemeChoice()
 	applyTheme()
 	loadDetailLayout()
@@ -512,6 +539,9 @@ func main() {
 		dpiScale = int(r) * 100 / 96
 	}
 	computeUiScale()
+	if sv := settings.Load(curProfDir).UiScale; sv == 125 || sv == 150 {
+		uiScale = sv // user preference wins over auto density
+	}
 	pSetTimer.Call(hwndMain, 1, 5000, 0) // overview auto-refresh (WM_TIMER id 1)
 
 	fontTitle = createWin32Font(38, true)
@@ -563,6 +593,10 @@ func main() {
 	hProfName = createChild("EDIT", "", esAutoHScroll, IDProfName, 596, 342, 240, 38, fontBody)
 	hProfNew = createChild("BUTTON", "新建身份", bsOwnerDraw, IDProfNew, 846, 340, 130, 40, fontNav)
 	hProfDel = createChild("BUTTON", "删除当前", bsOwnerDraw, IDProfDel, 986, 340, 130, 40, fontNav)
+	hUiN = createChild("BUTTON", "界面 100%", bsOwnerDraw, IDUiN, 310, 580, 150, 44, fontNav)
+	hUiM = createChild("BUTTON", "界面 125%", bsOwnerDraw, IDUiM, 470, 580, 150, 44, fontNav)
+	hUiL = createChild("BUTTON", "界面 150%", bsOwnerDraw, IDUiL, 630, 580, 150, 44, fontNav)
+	hSetVer = createChild("STATIC", "", ssLeft, IDSetVer, 310, 640, 700, 32, fontBody)
 	// kb page controls
 	kbCol = "anime"
 	for i := range kbCols {
@@ -571,6 +605,7 @@ func main() {
 	hKbToA = createChild("EDIT", "", esAutoHScroll|wsTabStop, KBToA, 310, 160, 460, 36, fontBody)
 	hKbAddBtn = createChild("BUTTON", "＋ 添加", bsOwnerDraw|wsTabStop, KBAdd, 780, 158, 110, 40, fontNav)
 	hKbSearchBtn = createChild("BUTTON", "搜索并添加", bsOwnerDraw|wsTabStop, KBSearch, 900, 158, 150, 40, fontNav)
+	hKbImportBtn = createChild("BUTTON", "导入电子书", bsOwnerDraw|wsTabStop, KBImport, 900, 158, 150, 40, fontNav)
 	// dark-theme the edit boxes (disable visual styles so WM_CTLCOLOREDIT applies)
 	empty := utf16("")
 	pSetWindowTheme.Call(hKbToA, uintptr(unsafe.Pointer(empty)), uintptr(unsafe.Pointer(empty)))

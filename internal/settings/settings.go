@@ -17,7 +17,8 @@ import (
 type Settings struct {
 	AutoStart  bool   `json:"auto_start"`  // register in HKCU Run so it launches at boot
 	QuitAction string `json:"quit_action"` // "exit" = close window quits app; "tray" = keep in tray
-	SilentStart bool`json:"silent_start"` // start minimized/silent (paired with -silent flag)
+	SilentStart bool  `json:"silent_start"`           // start minimized/silent (paired with -silent flag)
+	UiScale     int   `json:"ui_scale,omitempty"`     // content scale: 100/125/150 (0 = 100)
 }
 
 const runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
@@ -27,7 +28,7 @@ func file(dir string) string { return filepath.Join(dir, "settings.json") }
 
 // Load reads settings from dir (defaults if missing).
 func Load(dir string) Settings {
-	s := Settings{AutoStart: false, QuitAction: "tray"}
+	s := Settings{AutoStart: false, QuitAction: "tray", UiScale: 100}
 	b, err := os.ReadFile(file(dir))
 	if err == nil {
 		_ = json.Unmarshal(b, &s)
