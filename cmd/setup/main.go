@@ -37,7 +37,7 @@ var uninsExe []byte
 const (
 	uninstallKey   = `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\STARBOX`
 	appKey         = `HKCU\Software\STARBOX`
-	appVersion     = "1.2.9"
+	appVersion     = "1.2.10"
 	createNoWindow = 0x08000000
 )
 
@@ -67,6 +67,7 @@ const (
 
 	wmAppStep = 0x8010
 	wmAppDone = 0x8011
+	wmLayoutTick = 0x8012
 
 	IDBack   = 101
 	IDNext   = 102
@@ -106,6 +107,7 @@ var (
 	pPostQuit       = user32.NewProc("PostQuitMessage")
 	pLoadIcon       = user32.NewProc("LoadIconW")
 	pGetDpiSystem   = user32.NewProc("GetDpiForSystem")
+	pGetWindowRect  = user32.NewProc("GetWindowRect")
 	pFindWindow     = user32.NewProc("FindWindowW")
 
 	pCreateFont      = gdi32.NewProc("CreateFontW")
@@ -443,7 +445,7 @@ func onNext() {
 	case pgWelcome:
 		goPage(pgOptions)
 	case pgOptions:
-		d := strings.TrimSpace(getEdit())
+		d := strings.TrimSpace(installDir)
 		d = strings.Trim(d, `"`)
 		if d == "" {
 			optErr = "请填写安装位置"
@@ -482,144 +484,6 @@ func onNext() {
 	}
 }
 
-func onBack() {
-	if page == pgOptions {
-		goPage(pgWelcome)
-	}
-}
-
-func getEdit() string {
-	buf := make([]uint16, 512)
-	n, _, _ := pSendMessage.Call(hDirEdit, 0x000D /*WM_GETTEXT*/, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
-	return windows.UTF16ToString(buf[:n])
-}
-
-func setEdit(s string) {
-	sp, _ := windows.UTF16PtrFromString(s)
-	pSetWindowText.Call(hDirEdit, uintptr(unsafe.Pointer(sp)))
-}
-
-// ---------- button visibility / labels per page ----------
-
-func layoutButtons() {
-	back := page == pgOptions
-	nextLabel := "下一步"
-	cancel := page == pgWelcome || page == pgOptions
-	switch page {
-	case pgOptions:
-		nextLabel = "安装"
-	case pgDone:
-		nextLabel = "完成"
-	case pgProgress:
-		nextLabel = "安装中…"
-	}
-	pShowWindow.Call(hBack, boolVis(back))
-	pShowWindow.Call(hCancel, boolVis(cancel && !instBusy))
-	pShowWindow.Call(hBrowse, boolVis(page == pgOptions))
-	pShowWindow.Call(hDirEdit, boolVis(page == pgOptions))
-	setText(hNext, nextLabel)
-	// position the row
-	w, h := clientSize()
-	bw, bh := scale(118), scale(42)
-	y := h - scale(30) - bh
-	pMoveWindow.Call(hNext, uintptr(w-scale(24)-bw), uintptr(y), uintptr(bw), uintptr(bh), 1)
-	pMoveWindow.Call(hBack, uintptr(w-scale(24)-2*bw-scale(10)), uintptr(y), uintptr(bw), uintptr(bh), 1)
-	pMoveWindow.Call(hCancel, uintptr(scale(24)), uintptr(y), uintptr(bw), uintptr(bh), 1)
-	pMoveWindow.Call(hBrowse, uintptr(w-scale(24)-scale(96)), uintptr(y-scale(50)), uintptr(scale(96)), uintptr(scale(38)), 1)
-}
-
-func boolVis(b bool) uintptr {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-func setText(h uintptr, s string) {
-	sp, _ := windows.UTF16PtrFromString(s)
-	pSetWindowText.Call(h, uintptr(unsafe.Pointer(sp)))
-}
-
-// ---------- painting ----------
-
-func paintPage(dc uintptr, w, h int) {
-	contentY := scale(104)
-	contentH := h - scale(84) - contentY
-	x := scale(28)
-	cw := w - 2*x
-
-	// per-page content
-	switch page {
-	case pgWelcome:
-		drawText(dc, x, contentY+scale(16), cw, scale(44), "欢迎使用 星匣 STARBOX 安装向导", fontHead, colFg, dtSingle)
-		drawText(dc, x, contentY+scale(78), cw, contentH-scale(90),
-			"本向导将把 STARBOX 安装到你的电脑。\n\n"+
-				"· 番剧、收藏、订阅全部数据保存在本地\n"+
-				"· 随时可在「设置 → 应用」中卸载，并可选择保留数据\n"+
-				"· 安装过程不会写入任何注册表垃圾项\n\n"+
-				"点击「下一步」继续。", fontBody, colDim, 0)
-	case pgOptions:
-		drawText(dc, x, contentY+scale(8), cw, scale(30), "选择安装位置", fontBody, colFg, dtSingle)
-		// edit frame (edit sits inside)
-		fillRect(dc, x, contentY+scale(48), cw-scale(106), scale(42), colCard)
-		// upgrade notice
-		if upgrading {
-			noteY := contentY + scale(112)
-			fillRect(dc, x, noteY, cw, scale(58), colSide)
-			fillRectColor := uintptr(colAcc)
-			_ = fillRectColor
-			drawText(dc, x+scale(10), noteY+scale(8), cw-scale(20), scale(44),
-				"检测到已安装的 STARBOX（版本 "+orDash(existingVersion)+"）。将原地升级，你的数据会完整保留。",
-				fontSmall, colAcc, 0x0025) // single|vcenter
-		}
-		// option checkboxes
-		cbY := contentY + scale(186)
-		drawCheck(dc, x, cbY, scale(22), "创建开始菜单快捷方式", &optStartMenu)
-		drawCheck(dc, x, cbY+scale(40), scale(22), "创建桌面快捷方式", &optDesktop)
-		if optErr != "" {
-			drawText(dc, x, contentY+scale(146), cw, scale(26), optErr, fontSmall, colErr, dtSingle)
-		} else if !upgrading {
-			drawText(dc, x, contentY+scale(146), cw, scale(26), "全新安装 — 默认安装到 %LOCALAPPDATA%\\STARBOX", fontSmall, colDim, dtSingle)
-		}
-	case pgProgress:
-		drawText(dc, x, contentY+scale(8), cw, scale(34), "正在安装 STARBOX…", fontBody, colFg, dtSingle)
-		// step list
-		sy := contentY + scale(56)
-		for i, s := range installSteps {
-			glyph, color := "○", colDim
-			if i < instStep || instErr != "" && i < instStep {
-				glyph, color = "✓", colAcc
-			} else if i == instStep && instErr == "" {
-				glyph, color = "●", colAcc
-			}
-			drawText(dc, x, sy+i*scale(34), scale(28), scale(28), glyph, fontBody, color, dtCenter)
-			txtCol := uintptr(colFg)
-			if i > instStep {
-				txtCol = colDim
-			}
-			drawText(dc, x+scale(36), sy+i*scale(34), cw-scale(36), scale(28), s, fontSmall, txtCol, 0x0025)
-		}
-		// progress bar
-		barY := contentY + contentH - scale(56)
-		fillRect(dc, x, barY, cw, scale(10), colCard)
-		done := instStep * 100 / len(installSteps)
-		if instErr != "" {
-			drawText(dc, x, barY+scale(18), cw, scale(26), "安装失败："+instErr, fontSmall, colErr, 0)
-			drawText(dc, x, contentY+scale(8), cw, scale(34), "安装遇到问题", fontBody, colFg, dtSingle)
-		} else if done > 0 {
-			fillRect(dc, x, barY, cw*done/100, scale(10), colAcc)
-		}
-	case pgDone:
-		drawText(dc, x, contentY+scale(16), cw, scale(44), "安装完成！", fontHead, colAcc, dtSingle)
-		drawText(dc, x, contentY+scale(80), cw, scale(30), "STARBOX "+appVersion+" 已安装到：", fontBody, colFg, dtSingle)
-		drawText(dc, x, contentY+scale(112), cw, scale(30), installDir, fontSmall, colDim, 0x00000800|dtSingle) // path ellipsis
-		cbY := contentY + scale(164)
-		drawCheck(dc, x, cbY, scale(22), "安装完成后启动 STARBOX", &optLaunch)
-		drawText(dc, x, cbY+scale(46), cw, scale(56),
-			"随时可以从开始菜单或「设置 → 应用」中卸载 STARBOX。\n卸载时可以选择保留你的全部数据。", fontSmall, colDim, 0)
-	}
-}
-
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "未知版本"
@@ -633,11 +497,20 @@ func drawCheck(dc uintptr, x, y, size int, text string, val *bool) {
 	if val != nil && *val {
 		inner := size * 4 / 10
 		fillRect(dc, x+inner/2, y+inner/2, size-inner, size-inner, colAcc)
+		drawText(dc, x, y, size, size, "✓", fontSmall, 0xffffff, dtCenter|dtVCenter)
 	}
-	drawText(dc, x+size+scale(12), y, 600, size, text, fontBody, colFg, 0x0025)
+	drawText(dc, x+size+scale(12), y, 600, size, text, fontBody, colFg, 0x0024)
 }
 
 func hitCheck(x, y int) {
+	if page == pgOptions {
+		// clicking the path frame opens the folder browser
+		fy, _, ex, ew, eh, _, _ := optionsGeometry()
+		if x >= ex-scale(8) && x <= ex+ew+scale(8) && y >= fy-eh/2-scale(4) && y <= fy+eh/2+scale(4) {
+			user32.NewProc("PostMessageW").Call(hwndMain, 0x0111, IDBrowse, 0)
+			return
+		}
+	}
 	if page != pgOptions && page != pgDone {
 		return
 	}
@@ -647,19 +520,16 @@ func hitCheck(x, y int) {
 		val    *bool
 	}
 	if page == pgOptions {
-		_, h := clientSize()
-		contentY := scale(104)
-		_ = h
-		cbY := contentY + scale(186)
+		_, _, _, _, _, cb1Y, cb2Y := optionsGeometry()
 		boxes = append(boxes,
 			struct {
 				bx, by int
 				val    *bool
-			}{scale(28), cbY, &optStartMenu},
+			}{scale(28), cb1Y, &optStartMenu},
 			struct {
 				bx, by int
 				val    *bool
-			}{scale(28), cbY + scale(40), &optDesktop},
+			}{scale(28), cb2Y, &optDesktop},
 		)
 	} else {
 		_, h := clientSize()
@@ -678,6 +548,165 @@ func hitCheck(x, y int) {
 		}
 	}
 }
+
+// ---------- page interaction (edit / buttons / page painting) ----------
+
+func getEdit() string {
+	buf := make([]uint16, 512)
+	n, _, _ := pSendMessage.Call(hDirEdit, 0x000D /*WM_GETTEXT*/, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])))
+	return windows.UTF16ToString(buf[:n])
+}
+
+func setEdit(s string) {
+	sp, _ := windows.UTF16PtrFromString(s)
+	pSetWindowText.Call(hDirEdit, uintptr(unsafe.Pointer(sp)))
+}
+
+func boolVis(b bool) uintptr {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func setText(h uintptr, s string) {
+	sp, _ := windows.UTF16PtrFromString(s)
+	pSetWindowText.Call(h, uintptr(unsafe.Pointer(sp)))
+}
+
+// optionsGeometry computes the options-page rows from the window size so
+// nothing ever overlaps the footer buttons on short windows.
+func optionsGeometry() (frameY, frameH, editX, editW, editH, cb1Y, cb2Y int) {
+	w, _ := clientSize()
+	_ = w
+	frameY = scale(150)
+	editX = scale(40)
+	editW = w - scale(40) - scale(150)
+	editH = scale(32)
+	frameH = editH + scale(8)
+	cb1Y = frameY + frameH + scale(28)
+	cb2Y = cb1Y + scale(38)
+	return
+}
+
+func onBack() {
+	if page == pgOptions {
+		goPage(pgWelcome)
+	}
+}
+
+// layoutButtons shows/hides + positions the footer row per page. The
+// install-location EDIT control only exists visually on pgOptions — it is
+// created 0x0 sized and positioned here (it was never moved before, which
+// is why typed/browsed paths were invisible).
+func layoutButtons() {
+	back := page == pgOptions
+	nextLabel := "下一步"
+	cancel := page == pgWelcome || page == pgOptions
+	switch page {
+	case pgOptions:
+		nextLabel = "安装"
+	case pgDone:
+		nextLabel = "完成"
+	case pgProgress:
+		nextLabel = "安装中…"
+	}
+	pShowWindow.Call(hBack, boolVis(back))
+	pShowWindow.Call(hCancel, boolVis(cancel && !instBusy))
+	pShowWindow.Call(hBrowse, boolVis(page == pgOptions))
+	pShowWindow.Call(hDirEdit, 0) // path is owner-drawn; EDIT retired
+	setText(hNext, nextLabel)
+	w, h := clientSize()
+	bw, bh := scale(118), scale(42)
+	y := h - scale(34) - bh
+	pMoveWindow.Call(hNext, uintptr(w-scale(24)-bw), uintptr(y), uintptr(bw), uintptr(bh), 1)
+	pMoveWindow.Call(hBack, uintptr(w-scale(24)-2*bw-scale(10)), uintptr(y), uintptr(bw), uintptr(bh), 1)
+	pMoveWindow.Call(hCancel, uintptr(scale(24)), uintptr(y), uintptr(bw), uintptr(bh), 1)
+	pMoveWindow.Call(hBrowse, uintptr(w-scale(24)-scale(96)), uintptr(y-scale(50)), uintptr(scale(96)), uintptr(scale(38)), 1)
+	if page == pgOptions {
+		fy, fh, _, _, eh, _, _ := optionsGeometry()
+	w2, _ := clientSize()
+	_ = w2
+	pMoveWindow.Call(hBrowse, uintptr(w2-scale(24)-scale(110)), uintptr(fy-eh/2-scale(4)), uintptr(scale(110)), uintptr(fh+8), 1)
+	}
+}
+
+// ---------- painting ----------
+
+func paintPage(dc uintptr, w, h int) {
+	contentY := scale(104)
+	contentH := h - scale(84) - contentY
+	x := scale(28)
+	cw := w - 2*x
+
+	switch page {
+	case pgWelcome:
+		drawText(dc, x, contentY+scale(16), cw, scale(44), "欢迎使用 星匣 STARBOX 安装向导", fontHead, colFg, dtSingle)
+		drawText(dc, x, contentY+scale(78), cw, contentH-scale(90),
+			"本向导将把 STARBOX 安装到你的电脑。\n\n"+
+				"· 番剧、收藏、订阅全部数据保存在本地\n"+
+				"· 随时可在「设置 → 应用」中卸载，并可选择保留数据\n"+
+				"· 安装过程不会写入任何注册表垃圾项\n\n"+
+				"点击「下一步」继续。", fontBody, colDim, 0)
+	case pgOptions:
+		drawText(dc, x, contentY+scale(8), cw, scale(30), "选择安装位置", fontBody, colFg, dtSingle)
+		fy, fh, ex, ew, eh, cb1Y, cb2Y := optionsGeometry()
+		// path field: border + current path (owner-drawn; click opens browse)
+		fillRect(dc, ex-scale(8), fy-eh/2-scale(4), ew+scale(16), fh+scale(8), colCard2)
+		fillRect(dc, ex-scale(6), fy-eh/2-scale(2), ew+scale(12), fh+scale(4), colCard)
+		drawText(dc, ex, fy-eh/2, ew, eh, installDir, fontBody, colFg, 0x0024|0x00000800) // single|vcenter|path-ellipsis
+		if upgrading {
+			cbMid := (cb1Y + cb2Y + scale(22)) / 2
+			noteY := cbMid + scale(16)
+			fillRect(dc, x, noteY, cw, scale(58), colCard)
+			drawText(dc, x+scale(10), noteY+scale(8), cw-scale(20), scale(44),
+				"检测到已安装的 STARBOX（版本 "+orDash(existingVersion)+"）。将原地升级，你的数据会完整保留。",
+				fontSmall, colDim, 0x0025)
+		}
+		drawCheck(dc, x, cb1Y, scale(22), "创建开始菜单快捷方式", &optStartMenu)
+		drawCheck(dc, x, cb2Y, scale(22), "创建桌面快捷方式", &optDesktop)
+		if optErr != "" {
+			drawText(dc, x, cb1Y-scale(34), cw, scale(26), optErr, fontSmall, colErr, dtSingle)
+		} else if !upgrading {
+			drawText(dc, ex, fy+eh/2+scale(14), ew, scale(24), "默认安装到 %LOCALAPPDATA%\\STARBOX，可自行修改", fontSmall, colDim, dtSingle)
+		}
+	case pgProgress:
+		drawText(dc, x, contentY+scale(8), cw, scale(34), "正在安装 STARBOX…", fontBody, colFg, dtSingle)
+		sy := contentY + scale(56)
+		for i, s := range installSteps {
+			glyph, color := "○", colDim
+			if i < instStep || instErr != "" && i < instStep {
+				glyph, color = "✓", colAcc
+			} else if i == instStep && instErr == "" {
+				glyph, color = "●", colAcc
+			}
+			drawText(dc, x, sy+i*scale(34), scale(28), scale(28), glyph, fontBody, color, dtCenter)
+			txtCol := uintptr(colFg)
+			if i > instStep {
+				txtCol = colDim
+			}
+			drawText(dc, x+scale(36), sy+i*scale(34), cw-scale(36), scale(28), s, fontSmall, txtCol, 0x0025)
+		}
+		barY := contentY + contentH - scale(56)
+		fillRect(dc, x, barY, cw, scale(10), colCard)
+		done := instStep * 100 / len(installSteps)
+		if instErr != "" {
+			drawText(dc, x, barY+scale(18), cw, scale(26), "安装失败："+instErr, fontSmall, colErr, 0)
+			drawText(dc, x, contentY+scale(8), cw, scale(34), "安装遇到问题", fontBody, colFg, dtSingle)
+		} else if done > 0 {
+			fillRect(dc, x, barY, cw*done/100, scale(10), colAcc)
+		}
+	case pgDone:
+		drawText(dc, x, contentY+scale(16), cw, scale(44), "安装完成！", fontHead, colAcc, dtSingle)
+		drawText(dc, x, contentY+scale(80), cw, scale(30), "STARBOX "+appVersion+" 已安装到：", fontBody, colFg, dtSingle)
+		drawText(dc, x, contentY+scale(112), cw, scale(30), installDir, fontSmall, colDim, 0x00000800|dtSingle)
+		cbY := contentY + scale(164)
+		drawCheck(dc, x, cbY, scale(22), "安装完成后启动 STARBOX", &optLaunch)
+		drawText(dc, x, cbY+scale(46), cw, scale(56),
+			"随时可以从开始菜单或「设置 → 应用」中卸载 STARBOX。\n卸载时可以选择保留你的全部数据。", fontSmall, colDim, 0)
+	}
+}
+
 
 // ---------- banner / footer ----------
 
@@ -718,7 +747,7 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			return 0
 		case IDBrowse:
 			if p := browseFolder(); p != "" {
-				setEdit(p)
+				installDir = p
 				upgrading = false
 				if _, err := os.Stat(filepath.Join(p, "starbox.exe")); err == nil {
 					upgrading = true
@@ -806,6 +835,11 @@ func wndProcMain(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		layoutButtons()
 		r, _, _ := pDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
 		return r
+	case 0x0113: // WM_TIMER
+		if wParam == 2 && page == pgOptions {
+			layoutButtons() // cheap; keeps edit/browse sized despite DPI/race quirks
+		}
+		return 0
 	case 0x0010: // WM_CLOSE
 		if !instBusy {
 			pDestroyWindow.Call(hwnd)
@@ -897,7 +931,8 @@ func main() {
 		uintptr(wsOverlappedWindow&^0x00030000&^0x00040000), // no maximize/resize (thick frame kept for moving)
 		0x80000000, 0x80000000, uintptr(ww), uintptr(wh),
 		0, 0, hInst, 0)
-	user32.NewProc("SetWindowLongPtrW").Call(hwndMain, ^uintptr(20), uintptr(uint32(0x00000480))) // GWL_STYLE: dialog-frame
+	user32.NewProc("SetWindowLongPtrW").Call(hwndMain, ^uintptr(20), uintptr(uint32(0x00000480)))
+	user32.NewProc("SetTimer").Call(hwndMain, 2, 250, 0) // layout watchdog (edit/browse sizing) // GWL_STYLE: dialog-frame
 
 	fontHead = makeFont(scale(24), true)
 	fontBody = makeFont(scale(16), false)
