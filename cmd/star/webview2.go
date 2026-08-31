@@ -26,6 +26,7 @@ var (
 	wvNavKey    string // last navigated page+version key (avoid redundant NavigateToString)
 	wvLastX, wvLastY, wvLastW, wvLastH int // last applied host rect (client coords)
 	wvShown     bool   // host currently shown at least once at wvLast rect
+	wvChromiumShown bool // chromium controller currently Show()n
 	wvDetailID  string // record currently rendered in the web layer
 	wvVer       int    // webDataVer snapshot at last navigation
 	webDataVer  int    // bump when detail data/theme changed
@@ -69,6 +70,7 @@ func webResize() {
 			_ = wvChromium.Hide()
 		}
 		wvShown = false // next show re-applies rect + Resize
+		wvChromiumShown = false
 		return
 	}
 	cx, cw, top, bottom := kbGeom()
@@ -87,8 +89,9 @@ func webResize() {
 			wvChromium.Resize() // fills the host client area
 		}
 	}
-	if wvReady && wvChromium != nil {
+	if wvReady && wvChromium != nil && !wvChromiumShown {
 		_ = wvChromium.Show()
+		wvChromiumShown = true
 	}
 }
 

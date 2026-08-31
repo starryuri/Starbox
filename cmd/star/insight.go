@@ -12,6 +12,7 @@ import (
 	_ "image/png"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 
@@ -622,7 +623,7 @@ func insightWebShow() bool {
 	if page != "insight" {
 		return false
 	}
-	loadBind() // cheap: reads local store only
+	loadBindCached()
 	pl := insightPayload{
 		Bound: bindToken != "",
 		Login: bindLogin,
@@ -685,4 +686,38 @@ func loadInsightAsync() {
 		insBusy = false
 		pPostMessage.Call(hwndMain, uintptr(wmInsight), 0, 0)
 	}()
+}
+
+// bindCache avoids re-reading connect.json on every paint.
+var (
+	bindCacheMu   sync.Mutex
+	bindCacheVals map[string]interface{}
+	bindCacheAt   time.Time
+)
+
+// loadBindCached wraps loadBind with a 2s cache.
+func loadBindCached() {
+	bindCacheMu.Lock()
+	fresh := time.Since(bindCacheAt) < 2*time.Second && bindCacheVals != nil
+	vals := bindCacheVals
+	bindCacheMu.Unlock()
+	if fresh {
+		// refresh globals from cache without disk IO
+		acc, _ := vals[bindKeys[curPlat]].(string)
+		pass, _ := vals[bindKeys[curPlat]+"_pass"].(string)
+		if dec := settings.DPAPIUnprotect(pass); dec != "" {
+			pass = dec
+		}
+		setText(hAcc, acc)
+		setText(hPass, pass)
+		return
+	}
+	loadBind()
+	recs, _ := st.List("connect")
+	if len(recs) > 0 {
+		bindCacheMu.Lock()
+		bindCacheVals = recs[0].Data
+		bindCacheAt = time.Now()
+		bindCacheMu.Unlock()
+	}
 }

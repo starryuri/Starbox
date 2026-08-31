@@ -51,8 +51,12 @@ func hitTestKB(x, y int) string {
 }
 
 func paintFragment(dc uintptr) {
-	// Hide the web layer unless an anime detail page is showing.
-	if !(kbCardMode() && detailID != "" && !searchMode) {
+	// Hide the web layer only when no page wants it. The full-page web
+	// views (disk/insight/settings) claim it below in the same paint —
+	// hiding first then re-showing every frame made Chromium flicker.
+	onKBDetail := kbCardMode() && detailID != "" && !searchMode
+	webPageWants := page == "disk" || page == "insight" || page == "settings"
+	if wvVisible && !onKBDetail && !webPageWants {
 		webHideDetail()
 	}
 	// status strip under the page title (errors / notices)
