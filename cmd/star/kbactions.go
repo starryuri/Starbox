@@ -3,6 +3,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 "golang.org/x/sys/windows"
 "unsafe"
@@ -304,4 +305,58 @@ func applyUiScale(nsc int) {
 	relayout()
 	renderPage()
 	pInvalidateRect.Call(hwndMain, 0, 1)
+}
+
+// --- my review (self-written or imported from a local txt) ---
+
+// kbSetMyNote persists the user's own review into the record (mynote).
+func kbSetMyNote(id, text string) {
+	rec := recByID(id)
+	if rec == nil {
+		return
+	}
+	d := copyMap(rec.Data)
+	d["mynote"] = text
+	if _, err := st.Update(kbCol, id, d); err != nil {
+		SetError("保存评价失败：%v", err)
+		return
+	}
+	kbReload()
+	SetStatus("评价已保存")
+}
+
+// kbImportNote reads a local text file and stores it as the record's review.
+func kbImportNote(id string) {
+	rec := recByID(id)
+	if rec == nil {
+		return
+	}
+	filter := "文本文件\x00*.txt;*.md\x00所有文件\x00*.*\x00\x00"
+	paths := comdlgOpenFile("选择评价文件", filter, 0)
+	if len(paths) == 0 {
+		return
+	}
+	b, err := os.ReadFile(paths[0])
+	if err != nil {
+		SetError("读取评价文件失败：%v", err)
+		return
+	}
+	text := strings.TrimSpace(string(b))
+	if len(text) > 20000 {
+		text = text[:20000]
+	}
+	d := copyMap(rec.Data)
+	// merge: existing mynote (if any) + imported content
+	prev, _ := d["mynote"].(string)
+	if prev != "" && prev != text {
+		text = prev + "\n\n" + text
+	}
+	d["mynote"] = text
+	if _, err := st.Update(kbCol, id, d); err != nil {
+		SetError("导入评价失败：%v", err)
+		return
+	}
+	kbReload()
+	webRefreshDetail()
+	SetStatus("已导入评价（%d 字）", len([]rune(text)))
 }

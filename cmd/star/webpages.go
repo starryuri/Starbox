@@ -69,6 +69,9 @@ var (
 	diskScanBusy  bool
 	diskCachePath string
 )
+// diskScanRequested ensures the paint path never spawns scan goroutines
+// in a loop: it is set on first request and cleared when a scan completes.
+var diskScanRequested bool
 
 // buildDiskHTML renders the disk page. Path=="" lists partitions; otherwise
 // it lists the biggest children of path with bars (clickable to drill).
@@ -193,6 +196,7 @@ func diskScanAsync(path string, force bool) {
 	diskLastScan = pl
 	diskCachePath = path
 	diskCacheAt = time.Now()
+	diskScanRequested = false
 	diskWebMu.Unlock()
 	pPostMessage.Call(hwndMain, uintptr(wmDiskWeb), 0, 0)
 }

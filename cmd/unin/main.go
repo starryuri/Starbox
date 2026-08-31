@@ -32,15 +32,15 @@ const (
 
 // palette (COLORREF 0x00BBGGRR)
 const (
-	colBg    = uintptr(0x20100c)
-	colSide  = uintptr(0x2b1610)
-	colCard  = uintptr(0x4a3c20)
-	colCard2 = uintptr(0x60502e)
-	colAcc   = uintptr(0xeed322)
-	colFg    = uintptr(0xf7ece7)
-	colDim   = uintptr(0x8f8271)
+	colBg    = uintptr(0xf8f8f8)
+	colSide  = uintptr(0xf0f0f0)
+	colCard  = uintptr(0xffffff)
+	colCard2 = uintptr(0xe1e1e1) // light gray fill
+	colAcc   = uintptr(0xb86800)
+	colFg    = uintptr(0x1a1a1a) // near-black text
+	colDim   = uintptr(0x6d6d6d) // mid gray
 	colErr   = uintptr(0x6050ff)
-	colOnAcc = uintptr(0x170e0b)
+	colOnAcc = uintptr(0xffffff) // white on accent
 )
 
 const (

@@ -1038,6 +1038,16 @@ func persistDetail(id string, d *anime.Detail) {
 		return
 	}
 	data := rec.Data
+	// enrich record-level fields the detail page reads directly
+	if d.StartDate != "" {
+		data["air_start"] = d.StartDate
+	}
+	if d.Duration > 0 {
+		data["duration"] = d.Duration
+	}
+	if d.Status != "" {
+		data["air_status"] = zhAirStatus(d.Status)
+	}
 	cached := map[string]interface{}{}
 	stArr := make([]map[string]interface{}, 0, len(d.Studios))
 	for _, s := range d.Studios {
@@ -1250,4 +1260,21 @@ func bookProgress(r *kb.Record) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// zhAirStatus converts an AniList status into Chinese.
+func zhAirStatus(s string) string {
+	switch s {
+	case "FINISHED":
+		return "已完结"
+	case "RELEASING":
+		return "放送中"
+	case "NOT_YET_RELEASED":
+		return "未开播"
+	case "CANCELLED":
+		return "已取消"
+	case "HIATUS":
+		return "暂停放送"
+	}
+	return s
 }

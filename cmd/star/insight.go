@@ -605,7 +605,8 @@ func diskWebShow() bool {
 	if page != "disk" {
 		return false
 	}
-	if diskCachePath == "" && diskLastScan.Parts == nil && !dskBusy {
+	if diskCachePath == "" && diskLastScan.Parts == nil && !diskScanRequested {
+		diskScanRequested = true // set BEFORE spawn: paint runs again immediately
 		go diskScanAsync("", false)
 	}
 	diskWebMu.Lock()
@@ -621,8 +622,7 @@ func insightWebShow() bool {
 	if page != "insight" {
 		return false
 	}
-	loadBind()
-	loadInsightAsync()
+	loadBind() // cheap: reads local store only
 	pl := insightPayload{
 		Bound: bindToken != "",
 		Login: bindLogin,
@@ -637,8 +637,10 @@ func insightWebShow() bool {
 	if insMineCache != nil {
 		pl.Mine = insMineCache
 	}
+	// key must NOT embed ovStat values (CPU ticks would re-navigate the
+	// whole page every refresh); counts+login are stable per data change.
 	ver := webPageVers["insight"]
-	key := "insight|" + fmt.Sprintf("%d", ver) + "|" + pl.Login + "|" + fmt.Sprintf("%d", len(pl.Trend)) + "|" + fmt.Sprintf("%d", len(pl.Mine)) + "|" + pl.CPU
+	key := "insight|" + fmt.Sprintf("%d", ver) + "|" + pl.Login + "|" + fmt.Sprintf("%d", len(pl.Trend)) + "|" + fmt.Sprintf("%d", len(pl.Mine))
 	return webShowPage("insight", key, buildInsightHTML(pl))
 }
 

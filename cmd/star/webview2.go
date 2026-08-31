@@ -24,6 +24,8 @@ var (
 	hWebViewHost uintptr
 	wvPage      string // which page owns the web layer: "detail" | "disk" | "insight" | "settings"
 	wvNavKey    string // last navigated page+version key (avoid redundant NavigateToString)
+	wvLastX, wvLastY, wvLastW, wvLastH int // last applied host rect (client coords)
+	wvShown     bool   // host currently shown at least once at wvLast rect
 	wvDetailID  string // record currently rendered in the web layer
 	wvVer       int    // webDataVer snapshot at last navigation
 	webDataVer  int    // bump when detail data/theme changed
@@ -66,18 +68,28 @@ func webResize() {
 		if wvReady && wvChromium != nil {
 			_ = wvChromium.Hide()
 		}
+		wvShown = false // next show re-applies rect + Resize
 		return
 	}
 	cx, cw, top, bottom := kbGeom()
 	if wvPage == "disk" || wvPage == "insight" || wvPage == "settings" {
 		cx, cw, top, bottom = pageGeom()
 	}
-	pShowWindow.Call(hWebViewHost, 5) // SW_SHOW: MoveWindow does not unhide
-	pMoveWindow.Call(hWebViewHost, uintptr(cx), uintptr(top), uintptr(cw), uintptr(bottom-top), 1)
+	// MoveWindow with bRepaint=1 always invalidates; moving again with the
+	// same rect would re-enter WM_PAINT forever (paint → move → paint …).
+	// Track the rect we last applied and skip when nothing changed.
+	if wvLastW != cw || wvLastH != (bottom-top) || wvLastX != cx || wvLastY != top || !wvShown {
+		wvLastX, wvLastY, wvLastW, wvLastH = cx, top, cw, bottom-top
+		wvShown = true
+		pShowWindow.Call(hWebViewHost, 5) // SW_SHOW: MoveWindow does not unhide
+		pMoveWindow.Call(hWebViewHost, uintptr(cx), uintptr(top), uintptr(cw), uintptr(bottom-top), 1)
+		if wvReady && wvChromium != nil {
+			wvChromium.Resize() // fills the host client area
+		}
+	}
 	if wvReady && wvChromium != nil {
-		wvChromium.Resize() // fills the host client area
 		_ = wvChromium.Show()
-	} // SW_SHOW after MoveWindow keeps parent+child in sync
+	}
 }
 
 func webHideDetail() {
@@ -209,6 +221,10 @@ func webOnMessage(msg string) {
 		webRefreshPage("insight")
 	case "open":
 		openURL(m.Val)
+	case "notesave":
+		kbSetMyNote(m.ID, m.Val)
+	case "noteimport":
+		kbImportNote(m.ID)
 	case "set":
 		webSettingsAction(m.Val)
 	}

@@ -83,6 +83,8 @@ func buildDetailHTML(r *kb.Record) string {
 	total := numField(data, "total")
 	watched := strField(data, "watched")
 	air, _ := data["air_start"].(string)
+	durNum := numField(data, "duration")
+	airStatus, _ := data["air_status"].(string)
 
 	q := url.QueryEscape
 	coverURI := coverDataURI(r.ID)
@@ -127,6 +129,7 @@ func buildDetailHTML(r *kb.Record) string {
 	sb.WriteString(".btn.acc{background:" + acc + ";color:" + bg + "}" + nlConst)
 	sb.WriteString(".btn.danger{background:" + red + ";color:" + bg + ";margin-left:auto}" + nlConst)
 	sb.WriteString(".loading{color:" + dim + ";font-size:14px;padding:8px 0;font-style:italic}" + nlConst)
+	sb.WriteString("textarea{width:100%;min-height:110px;background:" + card + ";color:" + fg + ";border:1px solid " + card2 + ";border-radius:8px;padding:12px;font:inherit;resize:vertical}" + nlConst)
 	sb.WriteString("</style></head><body>")
 
 	// ---- hero ----
@@ -166,7 +169,27 @@ func buildDetailHTML(r *kb.Record) string {
 	if air != "" {
 		sb.WriteString("<span>播出 " + html.EscapeString(air) + "</span>")
 	}
+	if durNum != "" {
+		sb.WriteString("<span>每集 " + durNum + " 分钟</span>")
+	}
+	if airStatus != "" {
+		sb.WriteString("<span>· " + html.EscapeString(airStatus) + "</span>")
+	}
 	sb.WriteString("</div></div></div>") // hero-main, hero
+
+	// ---- my review: editable inline + import from local txt ----
+	sb.WriteString("<div class='section'><div class='sec-title'>我的评价</div>")
+	sb.WriteString("<textarea id='mynote' placeholder='写点什么…（点保存长期保留）'>")
+	mynote, _ := data["mynote"].(string)
+	if mynote != "" {
+		sb.WriteString(html.EscapeString(mynote))
+	}
+	sb.WriteString("</textarea>")
+	sb.WriteString("<div style='display:flex;gap:10px;margin-top:8px'>")
+	sb.WriteString("<button class='btn' onclick=\"send('notesave',document.getElementById('mynote').value)\">保存评价</button>")
+	sb.WriteString("<button class='btn' onclick=\"send('noteimport','" + q(r.ID) + "')\">从本地文件导入评价</button>")
+	sb.WriteString("</div></div>")
+
 
 	// ---- dynamic sections: rendered by data injected at load ----
 	sb.WriteString("<div id='sections'></div>")
@@ -215,11 +238,8 @@ sb.WriteString("function send(t,v,id){var m={t:t,v:v};if(id)m.id=id;window.chrom
 func wvRenderScript(bg, card, card2, acc, fg, dim string) string {
 	return `function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e;}
 function favKey(type,name){return type+'|'+name;}
-function render(){
-  var root=document.getElementById('sections');root.innerHTML='';
-  var D=DETAIL;
-  // studios
-  if(D.studios&&D.studios.length){
+var SEC_BUILDERS={
+  studios:function(root){
     var sec=el('div','section');sec.appendChild(el('div','sec-title','制作公司'));
     var grid=el('div','cv-grid');
     D.studios.forEach(function(s){
@@ -230,9 +250,8 @@ function render(){
       grid.appendChild(d);
     });
     sec.appendChild(grid);root.appendChild(sec);
-  }
-  // cast
-  if(D.cast&&D.cast.length){
+  },
+  cast:function(root){
     var sec2=el('div','section');sec2.appendChild(el('div','sec-title','声优 CV'));
     var grid2=el('div','cv-grid');
     D.cast.forEach(function(c){
@@ -242,15 +261,14 @@ function render(){
       var names=el('div');
       names.appendChild(el('div','cv-name',c.name));
       d.appendChild(names);
-      var va=el('div');va.style.cssText='font-size:13px;color:'+ '' ;va.textContent=c.va;
+      var va=el('div');va.style.cssText='font-size:13px;';va.textContent=c.va;
       d.appendChild(va);
       d.onclick=function(){send('fav','cv|'+c.va+'|'+c.vaid);};
       grid2.appendChild(d);
     });
     sec2.appendChild(grid2);root.appendChild(sec2);
-  }
-  // staff
-  if(D.staff&&D.staff.length){
+  },
+  staff:function(root){
     var sec3=el('div','section');sec3.appendChild(el('div','sec-title','制作人员 Staff'));
     var grid3=el('div','staff-grid');
     D.staff.forEach(function(s){
@@ -261,6 +279,14 @@ function render(){
     });
     sec3.appendChild(grid3);root.appendChild(sec3);
   }
+};
+var ORDER=D.order&&D.order.length?D.order:['studios','cast','staff'];
+function render(){
+  var root=document.getElementById('sections');root.innerHTML='';
+  var D=DETAIL;
+  ORDER.forEach(function(name){
+    if(SEC_BUILDERS[name]){SEC_BUILDERS[name](root);}
+  });
   if(!D.plain&&!(D.studios&&D.studios.length)&&!(D.cast&&D.cast.length)&&!(D.staff&&D.staff.length)){
     var l=el('div','loading','资料加载中…（打开片刻后自动重试）');
     root.appendChild(l);
@@ -274,6 +300,7 @@ send('hello','');
 // detailForWeb flattens the record + cached detail into the JSON the page eats.
 func detailForWeb(r *kb.Record) map[string]interface{} {
 	out := map[string]interface{}{"id": r.ID}
+	out["order"] = detailSections
 	var det *anime.Detail
 	if cached, ok := r.Data["_detail"].(map[string]interface{}); ok && cached != nil {
 		det = detailFromCache(cached)

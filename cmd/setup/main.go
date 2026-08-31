@@ -37,21 +37,21 @@ var uninsExe []byte
 const (
 	uninstallKey   = `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\STARBOX`
 	appKey         = `HKCU\Software\STARBOX`
-	appVersion     = "1.2.8"
+	appVersion     = "1.2.9"
 	createNoWindow = 0x08000000
 )
 
 // palette (COLORREF 0x00BBGGRR) — same theme as the main app
 const (
-	colBg    = uintptr(0x20100c) // #0c1020
-	colSide  = uintptr(0x2b1610) // #10162b
-	colCard  = uintptr(0x4a3c20) // #203c4a
-	colCard2 = uintptr(0x60502e)
-	colAcc   = uintptr(0xeed322) // #22d3ee
-	colFg    = uintptr(0xf7ece7)
-	colDim   = uintptr(0x8f8271)
+	colBg    = uintptr(0xf8f8f8) // classic white content
+	colSide  = uintptr(0xf0f0f0) // classic dialog gray
+	colCard  = uintptr(0xffffff) // white panels
+	colCard2 = uintptr(0xe1e1e1) // light gray fill
+	colAcc   = uintptr(0xb86800) // #0067b8 setup blue
+	colFg    = uintptr(0x1a1a1a) // near-black text
+	colDim   = uintptr(0x6d6d6d) // mid gray
 	colErr   = uintptr(0x6050ff) // #ff5060 soft red
-	colOnAcc = uintptr(0x170e0b)
+	colOnAcc = uintptr(0xffffff) // white on accent
 )
 
 const (
